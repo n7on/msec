@@ -25,8 +25,8 @@ BeforeAll {
     # Pester's Mock requires the command to EXIST, and a missing one fails as "Could not find
     # Command Get-MgContext" rather than as anything pointing at the real cause.
     #
-    # Stubbed only when absent, so a machine that has the real module still mocks the real
-    # command and the two behave identically.
+    # Stubbed when absent OR unusable, so a machine with a working module still mocks the
+    # real command and the two behave identically.
     # The stubs carry the REAL parameter names, not an empty param(). A -ParameterFilter is
     # evaluated against the mocked command's own signature, so a stub without -TenantId leaves
     # $TenantId unbound and the filter silently matches nothing - the mock is invoked, the
@@ -46,7 +46,21 @@ BeforeAll {
         }
     }
     foreach ($graphCmd in $graphStubs.Keys) {
-        if (-not (Get-Command $graphCmd -ErrorAction SilentlyContinue)) {
+        # DISCOVERABLE IS NOT USABLE, and testing only for presence is what broke CI on the
+        # ubuntu runner: Get-MgContext resolved as a command while its backing assembly
+        # (Microsoft.Graph.Authentication.Core) could not be loaded, so the stub was skipped
+        # and Pester's Mock then died building CommandMetadata -
+        #   "Cannot convert value Get-MgContext to type CommandMetadata"
+        # which points at the mock rather than at the half-installed module behind it. So the
+        # probe is the same one Mock performs: build the metadata, and stub when that fails.
+        # A global function shadows a cmdlet of the same name, so the stub wins either way.
+        $usable = $false
+        $found  = Get-Command $graphCmd -ErrorAction SilentlyContinue
+        if ($found) {
+            try   { $null = [System.Management.Automation.CommandMetadata]::new($found); $usable = $true }
+            catch { $usable = $false }
+        }
+        if (-not $usable) {
             Set-Item "function:global:$graphCmd" -Value $graphStubs[$graphCmd] -Force
             $script:StubbedGraphCommands += $graphCmd
         }
