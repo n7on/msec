@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Every OS runs even if one fails - "broken on Windows only" is the useful signal,
+      # and cancelling the others hides it.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # No build step: msec is a script module, so the repo layout IS the module.
+      # PowerShell 7 ships on every GitHub runner, and the manifest requires 7.0+, so
+      # there is deliberately no Windows PowerShell 5.1 leg.
+
+      - name: Cache PowerShell modules
+        uses: actions/cache@v6
+        with:
+          # Az.Compute alone is over 100 MB. Without a cache this step dominates the run.
+          path: |
+            ~/.local/share/powershell/Modules
+            ~/Documents/PowerShell/Modules
+          key: psmodules-${{ runner.os }}-${{ hashFiles('msec/msec.psd1') }}
+          restore-keys: |
+            psmodules-${{ runner.os }}-
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+
+          # ImportExcel: a real dependency of Export-MsecPostureReport. Without it that command's
+
+          # tests SKIP rather than fail, which reads as a green suite that never ran them.
+
+          if (-not (Get-Module -ListAvailable ImportExcel)) {
+
+            Install-Module ImportExcel -Scope CurrentUser -Force
+
+          }
+
+          
+
+          # Pester 5 for the suite itself.
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -ge '5.0')) {
+            Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -MinimumVersion 5.0
+          }
+
+          # The tests mock Az cmdlets, and Pester's Mock requires the command to EXIST -
+          # a missing module fails as "Could not find Command Get-AzContext" rather than
+          # as anything that points at the real cause. These four cover every Az cmdlet
+          # the suite mocks: Az.Accounts (context/subscription/token), Az.ResourceGraph
+          # (Search-AzGraph), Az.Compute (Invoke-AzVMRunCommand) and
+          # Az.OperationalInsights (Invoke-AzOperationalInsightsQuery).
+          foreach ($m in 'Az.Accounts', 'Az.ResourceGraph', 'Az.Compute', 'Az.OperationalInsights') {
+            if (-not (Get-Module -ListAvailable $m)) {
+              Install-Module $m -Scope CurrentUser -Force
+            }
+          }
+
+          # Az.Accounts warns that a newer Az exists, into whatever WarningVariable the
+          # caller supplied - so it lands in the middle of a test's own warnings. The tests
+          # no longer depend on warning ORDER, but silencing it at source keeps the logs
+          # readable and removes a difference between the runner and a developer's machine.
+          Import-Module Az.Accounts
+          Update-AzConfig -CheckForUpgrade $false -Scope Process | Out-Null
+
+      - name: Run Pester tests
+        shell: pwsh
+        # Keeps the suite off the runner's real module cache, the same way it keeps off a
+        # developer's. Tests that write the completion cache honour this.
+        #
+        # Step level, not job level: the `runner` context is only available inside steps, and
+        # referencing it in jobs.<id>.env fails the whole workflow at parse time with
+        # "Unrecognized named-value: 'runner'" - before any job starts, so there is no log to
+        # read. `github` and `matrix` ARE available up there, which is what makes the
+        # restriction easy to trip over.
+        env:
+          MSEC_CACHE_DIR: ${{ runner.temp }}/msec-cache
+        run: |
+          $result = Invoke-Pester -Path ./msec/tests -Output Detailed -PassThru
+
+          # Pester 5 does NOT set a non-zero exit code on its own, so without this a red
+          # suite reports a green build.
+          Write-Host "Passed: $($result.PassedCount)  Failed: $($result.FailedCount)  Skipped: $($result.SkippedCount)"
+          if ($result.FailedCount -gt 0) {
+            throw "$($result.FailedCount) test(s) failed."
+          }
+
+  help:
+    name: Help audit
+    runs-on: ubuntu-latest
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PlatyPS -Scope CurrentUser -Force
+          foreach ($m in 'Az.Accounts', 'Az.KeyVault', 'Az.Compute', 'Az.ResourceGraph', 'Az.OperationalInsights') {
+            if (-not (Get-Module -ListAvailable $m)) { Install-Module $m -Scope CurrentUser -Force }
+          }
+
+      # Audits, rather than regenerating and diffing. Comment-based help fails silently -
+      # one line starting '.word' truncates a whole block, and Get-Help then shows the
+      # syntax where the synopsis should be - so this checks for that directly. Diffing
+      # generated markdown would instead fail whenever the runner's PowerShell renders
+      # common parameters differently from the author's, which is noise.
+      - name: Audit comment-based help
+        shell: pwsh
+        run: ./tools/Update-MsecHelp.ps1 -AuditOnly
