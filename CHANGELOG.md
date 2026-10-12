@@ -4,6 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ## [0.5.0] - 2026-10-12
 
+### Changed
+- `New-MsecApp` creates the Key Vault when it does not exist, and the Bicep template that
+  used to do it has been removed. Pass `-ResourceGroupName` and `-Location` and the whole
+  bootstrap - vault, app registration, service principal, certificate, consent - is one
+  command against one tool. An existing vault is used exactly as before.
+
+  AN EXISTING VAULT IS NEVER RECONFIGURED. `-SoftDeleteRetentionInDays` and
+  `-NoPurgeProtection` apply only to a vault this command creates. Re-running the bootstrap
+  with the original arguments must not silently re-open a vault someone has since locked
+  down, so the creation options are read only on the path that creates.
+
+  NOT-FOUND IS AMBIGUOUS AND THE ERROR SAYS SO. `Get-AzKeyVault` returns nothing both for a
+  vault that does not exist and for one the caller cannot see, so a user without Reader on
+  the resource group would otherwise be told to create a vault that is already there - and
+  then fail on the globally unique name being taken.
+
+  THE VAULT IS RBAC-ONLY, AND CREATING ONE GRANTS ITS CREATOR NOTHING ON THE DATA PLANE.
+  Control plane and data plane are separate, so the certificate step would 403 for the very
+  person who just made the vault. The command grants itself `Key Vault Certificates Officer`
+  and then POLLS until that assignment reaches the data plane - an RBAC grant is not
+  effective when it returns, and a fixed sleep turns this into an intermittent failure. When
+  the grant is refused it warns and continues rather than failing: everything else still
+  configures, and the warning names the role to grant.
+
+  Three Az.KeyVault parameters that look like they exist do not, and the first implementation
+  used two of them: there is no `-EnableRbacAuthorization` (RBAC is the default;
+  `-DisableRbacAuthorization` opts out), there is no `-EnableSoftDelete` (soft delete is
+  always on), and `-SoftDeleteRetentionInDays` defaults to 90 rather than the 30 the Bicep
+  template set. Retention is passed explicitly so vaults made either way are identical.
+
+  The RBAC roles that this command deliberately does NOT grant - `Key Vault Certificate User`
+  and `Key Vault Crypto User`, needed by everyone who runs `Connect-Msec` - moved into the
+  command's own help, which is where someone running the bootstrap will actually look. The
+  module still never needs `Key Vault Secrets User`: the private key never leaves the vault.
+
+### Fixed
+- The `Connect-MsecAdmin`, `Set-MsecDefenderAlert` and `Set-MsecDefenderIncident` tests
+  stubbed the Microsoft Graph commands only when they were ABSENT, which is not the same
+  question as whether they can be used.
+
+  On the Ubuntu CI runner `Get-MgContext` resolved as a command while its backing assembly
+  could not be loaded, so the stub was skipped and Pester's `Mock` then failed building
+  `CommandMetadata` - reported as "Cannot convert value Get-MgContext to type
+  CommandMetadata", which points at the mock rather than at the half-installed module behind
+  it. The probe is now the same one `Mock` performs, so a command that cannot be mocked is
+  stubbed whether it resolves or not.
+
+
 ### Fixed
 - `Get-MsecPurviewRetention` reported an empty retention-policy list as though it had measured
   zero. It had not.

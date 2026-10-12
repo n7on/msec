@@ -19,13 +19,15 @@ function New-MsecApp {
           5. PATCHes requiredResourceAccess - existing entries for unrelated resources are
              preserved; for Graph / WindowsDefenderATP, missing role IDs are added.
           6. Finds or creates the matching service principal.
-          7. Finds or issues the self-signed certificate inside the named Key Vault.
-          8. Stamps the cert with AppId / TenantId tags (overwrites - idempotent).
-          9. Attaches the cert to the app only if a credential with that thumbprint is not
+          7. Finds the named Key Vault, or CREATES it when -ResourceGroupName and -Location
+             are supplied - RBAC-only, soft delete on, purge protection on by default.
+          8. Finds or issues the self-signed certificate inside that Key Vault.
+          9. Stamps the cert with AppId / TenantId tags (overwrites - idempotent).
+         10. Attaches the cert to the app only if a credential with that thumbprint is not
              already present.
-         10. Grants admin consent by creating appRoleAssignments - only for (resource, role)
+         11. Grants admin consent by creating appRoleAssignments - only for (resource, role)
              pairs not already assigned.
-         11. Returns an object with TenantId, ClientId, KeyVaultName, CertificateName.
+         12. Returns an object with TenantId, ClientId, KeyVaultName, CertificateName.
 
         Current required permissions (configured at the top of the function in $resources):
           - Microsoft Graph: SecurityEvents.Read.All, DeviceManagementConfiguration.Read.All,
@@ -94,7 +96,27 @@ function New-MsecApp {
         that satisfies both. Aliased to -ExchangeDirectoryRole, the name this had in 0.2.0.
 
     .PARAMETER KeyVaultName
-        Name of an existing Azure Key Vault that will store the certificate.
+        Name of the Azure Key Vault that will store the certificate. Used as-is when it
+        already exists; created when it does not and -ResourceGroupName and -Location are
+        supplied. Vault names are globally unique across Azure, so a name someone else holds
+        fails at creation rather than being silently reused.
+
+    .PARAMETER ResourceGroupName
+        Resource group to create the Key Vault in. Only consulted when the vault is missing.
+
+    .PARAMETER Location
+        Azure region to create the Key Vault in, e.g. 'westeurope'. Only consulted when the
+        vault is missing.
+
+    .PARAMETER SoftDeleteRetentionInDays
+        Soft-delete retention for a vault this command creates. Default 30. Ignored for a
+        vault that already exists - an existing vault is never reconfigured.
+
+    .PARAMETER NoPurgeProtection
+        Create the vault WITHOUT purge protection. Purge protection is on by default because
+        the vault holds an authentication credential, and it cannot be switched off later.
+        The trade-off is that a vault created with a mistyped name cannot be removed, and its
+        name cannot be reused, until the soft-delete window expires.
 
     .PARAMETER CertificateName
         Name of the certificate object inside Key Vault. Default: 'msec-app'.
@@ -103,12 +125,34 @@ function New-MsecApp {
         Certificate lifetime in months. Default: 24.
 
     .EXAMPLE
+        # From nothing: create the resource group, the vault and the app in one go.
+        Connect-AzAccount
+        New-AzResourceGroup -Name 'rg-msec' -Location 'westeurope'
+        $app = New-MsecApp -KeyVaultName 'kv-mysec' -ResourceGroupName 'rg-msec' -Location 'westeurope'
+
+    .EXAMPLE
+        # The vault already exists - resource group and location are not needed.
         Connect-AzAccount
         $app = New-MsecApp -KeyVaultName 'kv-mysec'
         # Hand $app.TenantId / $app.ClientId / $app.KeyVaultName / $app.CertificateName to anyone
         # who should run reports; they Connect-Msec with those values.
 
     .NOTES
+        ROLES THIS COMMAND DOES NOT GRANT, AND SOMEONE MUST. The vault is RBAC-only, so
+        access policies do nothing on it. Creating the vault here grants the caller 'Key
+        Vault Certificates Officer' so the certificate step can run, and nothing else -
+        everyone who will USE the module still needs granting, by whoever manages role
+        assignments:
+
+          Key Vault Certificate User   - report users, on the vault. Read cert metadata+tags.
+          Key Vault Crypto User        - report users, on the vault. Sign the JWT client
+                                         assertion that Connect-Msec exchanges for a token.
+
+        Both are needed together: metadata without signing cannot authenticate, and signing
+        without metadata cannot find the certificate. 'Key Vault Secrets User' is NOT needed
+        and should not be granted - the certificate's private key never leaves the vault, and
+        the module never reads it.
+
         AZURE DEVOPS IS NOT CONFIGURED HERE, AND CANNOT BE. There is no -Workload for it and
         nothing useful to grant. The Azure DevOps resource exposes exactly two application app
         roles - vso.loadtest and vso.loadtest_write, both load testing - and neither touches the
@@ -130,6 +174,27 @@ function New-MsecApp {
         [Parameter(Mandatory)][string] $KeyVaultName,
         [Parameter()][string] $CertificateName = 'msec-app',
         [Parameter()][ValidateRange(1, 24)][int] $ValidityMonths = 24,
+
+        # Creating the vault, rather than requiring one to exist already. Both are needed to
+        # create and neither has a sensible default, so they are only consulted when the named
+        # vault is missing - supplying them for a vault that already exists changes nothing.
+        #
+        # An existing vault is used as-is: its SKU, network rules and retention are NOT
+        # reconciled against the values below. Re-running this against a vault someone has
+        # deliberately locked down must not quietly re-open it.
+        [Parameter()][string] $ResourceGroupName,
+        [Parameter()][string] $Location,
+
+        # Matches what the retired Bicep template provisioned, so vaults created either way
+        # are identical.
+        [Parameter()][ValidateRange(7, 90)][int] $SoftDeleteRetentionInDays = 30,
+
+        # PURGE PROTECTION CANNOT BE TURNED OFF ONCE ON - that is the point of it, and it is
+        # the right default for a vault holding a credential. The escape hatch exists because
+        # it also means a vault created with a mistyped name cannot be removed and its name
+        # cannot be reused until the soft-delete window expires, which is a harsh outcome for
+        # someone trying the command out.
+        [Parameter()][switch] $NoPurgeProtection,
 
         # Workloads beyond Graph and Defender. OPT-IN, and deliberately not the default:
         #
@@ -462,7 +527,108 @@ function New-MsecApp {
         & $graph POST '/v1.0/servicePrincipals' @{ appId = $clientId }
     }
 
-    # ---- 5. Find-or-create the certificate in Key Vault ----
+    # ---- 5. Find-or-create the Key Vault ----
+    # Replaces the Bicep template this module used to ship. One vault, RBAC-only, soft delete
+    # on - the same shape the template produced, so vaults made either way are identical.
+    #
+    # No ShouldProcess here, deliberately: this command already creates an app registration,
+    # a service principal and admin consent without it, so honouring -WhatIf for the vault
+    # alone would report a dry run while doing the rest for real.
+    $vault = Get-AzKeyVault -VaultName $KeyVaultName -ErrorAction SilentlyContinue
+    $createdVault = $false
+
+    if ($vault) {
+        Write-Verbose "Using existing Key Vault '$KeyVaultName' in resource group '$($vault.ResourceGroupName)'"
+    }
+    else {
+        # NOT-FOUND HERE IS AMBIGUOUS and the message says so. Get-AzKeyVault returns nothing
+        # both for a vault that does not exist and for one the caller cannot see, so a reader
+        # without Reader on the resource group lands here and would otherwise be told to
+        # create a vault that is already there - then fail on the name being taken.
+        if (-not $ResourceGroupName -or -not $Location) {
+            throw ("Key Vault '$KeyVaultName' was not found, so it would have to be created - " +
+                   'which needs both -ResourceGroupName and -Location. Note that "not found" ' +
+                   'also covers "exists but not visible to you": Get-AzKeyVault returns nothing ' +
+                   'in both cases. If the vault does exist, you need at least Reader on its ' +
+                   'resource group before this command can use it.')
+        }
+
+        Write-Verbose "Creating Key Vault '$KeyVaultName' in '$ResourceGroupName' ($Location)"
+        # THREE THINGS THAT LOOK LIKE SETTINGS AND ARE NOT, in current Az.KeyVault (6.x):
+        #   RBAC         is the default - there is no -EnableRbacAuthorization, only
+        #                -DisableRbacAuthorization. Not passing it is how you get RBAC, which
+        #                is what the documented roles require.
+        #   Soft delete  is always on and cannot be switched off at all.
+        #   Retention    defaults to 90 days, NOT the 30 the retired Bicep template set, so it
+        #                is passed explicitly to keep vaults made either way identical.
+        $newVaultArgs = @{
+            VaultName                 = $KeyVaultName
+            ResourceGroupName         = $ResourceGroupName
+            Location                  = $Location
+            Sku                       = 'Standard'
+            SoftDeleteRetentionInDays = $SoftDeleteRetentionInDays
+        }
+        # Purge protection is one-way: Azure rejects a false, so the property is omitted
+        # rather than sent as $false.
+        if (-not $NoPurgeProtection) { $newVaultArgs['EnablePurgeProtection'] = $true }
+
+        $vault = New-AzKeyVault @newVaultArgs -ErrorAction Stop
+        $createdVault = $true
+        Write-Verbose "Created Key Vault '$KeyVaultName' ($($vault.ResourceId))"
+
+        # CREATING AN RBAC VAULT GRANTS THE CREATOR NOTHING ON ITS DATA PLANE. Control plane
+        # and data plane are separate, so issuing the certificate below would 403 for the very
+        # person who just made the vault. That failure is opaque enough in isolation that the
+        # role is granted here rather than left as an undocumented manual step.
+        $signedInId = $null
+        try { $signedInId = (Get-AzADUser -SignedIn -ErrorAction Stop).Id } catch { }
+
+        if (-not $signedInId) {
+            Write-Warning ("Created the vault but could not resolve the signed-in user, so " +
+                "'Key Vault Certificates Officer' was NOT granted. Grant it on '$KeyVaultName' " +
+                'and re-run - the command is idempotent.')
+        }
+        else {
+            try {
+                New-AzRoleAssignment -ObjectId $signedInId `
+                    -RoleDefinitionName 'Key Vault Certificates Officer' `
+                    -Scope $vault.ResourceId -ErrorAction Stop | Out-Null
+                Write-Verbose "Granted 'Key Vault Certificates Officer' on the new vault"
+            }
+            catch {
+                # Already assigned - inherited from a higher scope, or a re-run - is success.
+                if ($_.Exception.Message -match 'already exists|RoleAssignmentExists') {
+                    Write-Verbose "'Key Vault Certificates Officer' was already assigned"
+                }
+                else {
+                    Write-Warning ("Created the vault but could not grant 'Key Vault " +
+                        "Certificates Officer': $($_.Exception.Message) Granting roles needs " +
+                        'Owner or User Access Administrator on the resource group. Grant the ' +
+                        'role on the vault and re-run - the command is idempotent.')
+                }
+            }
+        }
+
+        # AN RBAC GRANT IS NOT EFFECTIVE THE MOMENT IT RETURNS. Assignments take tens of
+        # seconds to reach the data plane, so the certificate step below fails with 403 on a
+        # vault created seconds earlier - intermittently, which is the worst way to fail. Poll
+        # until a data-plane read works rather than sleeping a guessed interval.
+        $deadline = (Get-Date).AddSeconds(90)
+        while ((Get-Date) -lt $deadline) {
+            try {
+                Get-AzKeyVaultCertificate -VaultName $KeyVaultName -ErrorAction Stop | Out-Null
+                Write-Verbose 'Data-plane access to the new vault is live'
+                break
+            }
+            catch {
+                if ($_.Exception.Message -notmatch 'Forbidden|403|does not have .*permission') { break }
+                Write-Verbose 'Waiting for the role assignment to reach the vault data plane'
+                Start-Sleep -Seconds 5
+            }
+        }
+    }
+
+    # ---- 6. Find-or-create the certificate in Key Vault ----
     $kvCert = try {
         Get-AzKeyVaultCertificate -VaultName $KeyVaultName -Name $CertificateName -ErrorAction Stop
     }
@@ -500,7 +666,7 @@ function New-MsecApp {
     Update-AzKeyVaultCertificate -VaultName $KeyVaultName -Name $CertificateName `
         -Tag @{ AppId = $clientId; TenantId = $tenantId } -PassThru | Out-Null
 
-    # ---- 6. Attach the cert to the app (only if a credential with this thumbprint isn't already there) ----
+    # ---- 7. Attach the cert to the app (only if a credential with this thumbprint isn't already there) ----
     $thumbBytes = New-Object byte[] ($kvCert.Thumbprint.Length / 2)
     for ($i = 0; $i -lt $thumbBytes.Length; $i++) {
         $thumbBytes[$i] = [Convert]::ToByte($kvCert.Thumbprint.Substring($i * 2, 2), 16)
@@ -527,7 +693,7 @@ function New-MsecApp {
         } | Out-Null
     }
 
-    # ---- 7. Grant admin consent for any (resource, role) pair not already assigned ----
+    # ---- 8. Grant admin consent for any (resource, role) pair not already assigned ----
     # NB: this GET is not paged. Graph returns up to 100 assignments by default and msec asks
     # for around fifteen, so a second page would mean the app had been granted a great deal
     # more than this module needs - worth knowing if that ever becomes true.
@@ -581,7 +747,7 @@ function New-MsecApp {
         }
     }
 
-    # ---- 8. Say what happened ----------------------------------------------------------
+    # ---- 9. Say what happened ----------------------------------------------------------
     Write-Host "Permissions: $($grantedNow.Count) granted now, $($alreadyGranted.Count) already present$(if ($missingRoles) { ", $(@($missingRoles).Count) unavailable in this cloud" })$(if ($failedGrants.Count) { ", $($failedGrants.Count) REFUSED" })."
     foreach ($g in $grantedNow) { Write-Host "  + $g" }
     foreach ($f in $failedGrants) { Write-Host "  x $f" -ForegroundColor Red }

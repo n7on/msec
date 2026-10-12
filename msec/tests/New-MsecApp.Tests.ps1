@@ -27,6 +27,27 @@ Mock Get-MsecEnvironment -MockWith {
     }
 }
 
+# The vault already exists by default, so most tests take the find path and never touch
+# creation. New-AzKeyVault and New-AzRoleAssignment are mocked all the same: an unmocked one
+# would create REAL Azure resources from a test run, which is a far worse failure than a red
+# test. Same reasoning as the certificate cmdlets below.
+Mock Get-AzKeyVault -MockWith {
+    [pscustomobject]@{
+        VaultName         = 'kv-test'
+        ResourceGroupName = 'rg-test'
+        ResourceId        = '/subscriptions/s1/resourceGroups/rg-test/providers/Microsoft.KeyVault/vaults/kv-test'
+    }
+}
+Mock New-AzKeyVault -MockWith {
+    [pscustomobject]@{
+        VaultName         = 'kv-test'
+        ResourceGroupName = 'rg-test'
+        ResourceId        = '/subscriptions/s1/resourceGroups/rg-test/providers/Microsoft.KeyVault/vaults/kv-test'
+    }
+}
+Mock Get-AzADUser      -MockWith { [pscustomobject]@{ Id = 'signed-in-user' } }
+Mock New-AzRoleAssignment -MockWith { }
+
 # The certificate already exists and matches, so the run reaches the consent step. Every
 # Key Vault cmdlet the function can touch is mocked - Update-AzKeyVaultCertificate runs
 # unconditionally, and an unmocked one reaches real Azure from a test run.
@@ -501,6 +522,130 @@ Describe 'New-MsecApp' {
             ($warnings -join ' ') | Should -Match 'could not be resolved'
             # The Graph roles were still configured.
             @($out.GrantedNow).Count | Should -BeGreaterThan 0
+        }
+    }
+}
+
+Describe 'New-MsecApp key vault provisioning' {
+
+    # Every test runs InModuleScope and rebuilds the shared mocks from text, the same way the
+    # Describe above does: a plain Mock at file scope does NOT intercept a call made from
+    # inside the module, and here that failure mode is expensive - an unmocked New-AzKeyVault
+    # reaches real Azure and tries to create a real vault.
+
+    It 'uses an existing vault and never tries to create one' {
+        # The common case. -ResourceGroupName and -Location must not become required just
+        # because the command gained the ability to create a vault.
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            New-MsecApp -KeyVaultName 'kv-test' -InformationAction SilentlyContinue 6>$null | Out-Null
+            Should -Invoke New-AzKeyVault -Times 0 -Exactly
+        }
+    }
+
+    It 'does not reconfigure an existing vault even when creation options are passed' {
+        # Re-running the bootstrap with the original arguments must not silently re-open a
+        # vault that has since been locked down.
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            New-MsecApp -KeyVaultName 'kv-test' -ResourceGroupName 'rg-test' -Location 'westeurope' `
+                -SoftDeleteRetentionInDays 7 -InformationAction SilentlyContinue 6>$null | Out-Null
+            Should -Invoke New-AzKeyVault -Times 0 -Exactly
+        }
+    }
+
+    It 'refuses to guess a resource group or location, and says not-found is ambiguous' {
+        # The message has to carry the ambiguity: Get-AzKeyVault returns nothing both for a
+        # missing vault and for one the caller cannot see, so telling a user without Reader
+        # to "create it" sends them straight to a name-already-taken error.
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            Mock Get-AzKeyVault -MockWith { $null }
+            { New-MsecApp -KeyVaultName 'kv-missing' -InformationAction SilentlyContinue 6>$null } |
+                Should -Throw '*-ResourceGroupName and -Location*'
+            { New-MsecApp -KeyVaultName 'kv-missing' -InformationAction SilentlyContinue 6>$null } |
+                Should -Throw '*exists but not visible to you*'
+            Should -Invoke New-AzKeyVault -Times 0 -Exactly
+        }
+    }
+
+    It 'creates the vault with 30-day retention, purge protection, and RBAC left at the default' {
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            Mock Get-AzKeyVault -MockWith { $null }
+            New-MsecApp -KeyVaultName 'kv-new' -ResourceGroupName 'rg-test' -Location 'westeurope' `
+                -InformationAction SilentlyContinue 6>$null | Out-Null
+            Should -Invoke New-AzKeyVault -Times 1 -Exactly -ParameterFilter {
+                # There is no -EnableRbacAuthorization in Az.KeyVault 6.x: RBAC is the default
+                # and -DisableRbacAuthorization opts out, so the assertion is that nothing
+                # opted out. An access-policy vault would reject every role msec documents.
+                -not $PSBoundParameters.ContainsKey('DisableRbacAuthorization') -and
+                # 30, not the Az default of 90 - matching the vault the Bicep template made.
+                $SoftDeleteRetentionInDays -eq 30 -and
+                $EnablePurgeProtection -eq $true
+            }
+        }
+    }
+
+    It '-NoPurgeProtection omits the flag rather than passing it as false' {
+        # Purge protection is one-way; Azure rejects an explicit false, so the property has to
+        # be absent rather than present-and-false.
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            Mock Get-AzKeyVault -MockWith { $null }
+            New-MsecApp -KeyVaultName 'kv-new' -ResourceGroupName 'rg-test' -Location 'westeurope' `
+                -NoPurgeProtection -InformationAction SilentlyContinue 6>$null | Out-Null
+            Should -Invoke New-AzKeyVault -Times 1 -Exactly -ParameterFilter {
+                -not $PSBoundParameters.ContainsKey('EnablePurgeProtection')
+            }
+        }
+    }
+
+    It 'grants the caller Certificates Officer, because an RBAC vault grants its creator nothing' {
+        # Control plane and data plane are separate: without this the certificate step 403s
+        # for the very person who just created the vault.
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            Mock Get-AzKeyVault -MockWith { $null }
+            New-MsecApp -KeyVaultName 'kv-new' -ResourceGroupName 'rg-test' -Location 'westeurope' `
+                -InformationAction SilentlyContinue 6>$null | Out-Null
+            Should -Invoke New-AzRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $RoleDefinitionName -eq 'Key Vault Certificates Officer' -and
+                $ObjectId -eq 'signed-in-user'
+            }
+        }
+    }
+
+    It 'treats an already-assigned role as success' {
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            Mock Get-AzKeyVault -MockWith { $null }
+            Mock New-AzRoleAssignment -MockWith { throw 'The role assignment already exists.' }
+            { New-MsecApp -KeyVaultName 'kv-new' -ResourceGroupName 'rg-test' -Location 'westeurope' `
+                -InformationAction SilentlyContinue 6>$null } | Should -Not -Throw
+        }
+    }
+
+    It 'warns rather than fails when the caller cannot grant roles' {
+        # Creating the vault without User Access Administrator is real and recoverable:
+        # everything else still configures, and the warning names the role to grant.
+        InModuleScope Msec -Parameters @{ MockText = $script:MockText } {
+            param($MockText)
+            & ([scriptblock]::Create($MockText))
+            Mock Get-AzKeyVault -MockWith { $null }
+            Mock New-AzRoleAssignment -MockWith { throw 'AuthorizationFailed' }
+            $warnings = @()
+            New-MsecApp -KeyVaultName 'kv-new' -ResourceGroupName 'rg-test' -Location 'westeurope' `
+                -WarningVariable warnings -WarningAction SilentlyContinue `
+                -InformationAction SilentlyContinue 6>$null | Out-Null
+            ($warnings -join ' ') | Should -Match 'User Access Administrator'
         }
     }
 }

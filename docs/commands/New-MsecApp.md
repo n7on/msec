@@ -16,7 +16,9 @@ Safe to re-run.
 
 ```
 New-MsecApp [[-DisplayName] <String>] [-KeyVaultName] <String> [[-CertificateName] <String>]
- [[-ValidityMonths] <Int32>] [[-Workload] <String[]>] [[-DirectoryRole] <String>] [<CommonParameters>]
+ [[-ValidityMonths] <Int32>] [[-ResourceGroupName] <String>] [[-Location] <String>]
+ [[-SoftDeleteRetentionInDays] <Int32>] [-NoPurgeProtection] [[-Workload] <String[]>]
+ [[-DirectoryRole] <String>] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -43,16 +45,19 @@ PATCHes requiredResourceAccess - existing entries for unrelated resources are
   6.
 Finds or creates the matching service principal.
   7.
-Finds or issues the self-signed certificate inside the named Key Vault.
+Finds the named Key Vault, or CREATES it when -ResourceGroupName and -Location
+     are supplied - RBAC-only, soft delete on, purge protection on by default.
   8.
-Stamps the cert with AppId / TenantId tags (overwrites - idempotent).
+Finds or issues the self-signed certificate inside that Key Vault.
   9.
+Stamps the cert with AppId / TenantId tags (overwrites - idempotent).
+ 10.
 Attaches the cert to the app only if a credential with that thumbprint is not
      already present.
- 10.
+ 11.
 Grants admin consent by creating appRoleAssignments - only for (resource, role)
      pairs not already assigned.
- 11.
+ 12.
 Returns an object with TenantId, ClientId, KeyVaultName, CertificateName.
 
 Current required permissions (configured at the top of the function in $resources):
@@ -122,6 +127,15 @@ is still configured and a warning says exactly what to assign by hand.
 
 ### EXAMPLE 1
 ```
+# From nothing: create the resource group, the vault and the app in one go.
+Connect-AzAccount
+New-AzResourceGroup -Name 'rg-msec' -Location 'westeurope'
+$app = New-MsecApp -KeyVaultName 'kv-mysec' -ResourceGroupName 'rg-msec' -Location 'westeurope'
+```
+
+### EXAMPLE 2
+```
+# The vault already exists - resource group and location are not needed.
 Connect-AzAccount
 $app = New-MsecApp -KeyVaultName 'kv-mysec'
 # Hand $app.TenantId / $app.ClientId / $app.KeyVaultName / $app.CertificateName to anyone
@@ -147,7 +161,12 @@ Accept wildcard characters: False
 ```
 
 ### -KeyVaultName
-Name of an existing Azure Key Vault that will store the certificate.
+Name of the Azure Key Vault that will store the certificate.
+Used as-is when it
+already exists; created when it does not and -ResourceGroupName and -Location are
+supplied.
+Vault names are globally unique across Azure, so a name someone else holds
+fails at creation rather than being silently reused.
 
 ```yaml
 Type: String
@@ -193,6 +212,77 @@ Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
+### -ResourceGroupName
+Resource group to create the Key Vault in.
+Only consulted when the vault is missing.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 5
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Location
+Azure region to create the Key Vault in, e.g.
+'westeurope'.
+Only consulted when the
+vault is missing.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 6
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -SoftDeleteRetentionInDays
+Soft-delete retention for a vault this command creates.
+Default 30.
+Ignored for a
+vault that already exists - an existing vault is never reconfigured.
+
+```yaml
+Type: Int32
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 7
+Default value: 30
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -NoPurgeProtection
+Create the vault WITHOUT purge protection.
+Purge protection is on by default because
+the vault holds an authentication credential, and it cannot be switched off later.
+The trade-off is that a vault created with a mistyped name cannot be removed, and its
+name cannot be reused, until the soft-delete window expires.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
 ### -Workload
 Extra workloads to configure: any of Exchange, SharePoint and Teams.
 Omitted by
@@ -205,7 +295,7 @@ Parameter Sets: (All)
 Aliases:
 
 Required: False
-Position: 5
+Position: 8
 Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
@@ -225,7 +315,7 @@ Parameter Sets: (All)
 Aliases: ExchangeDirectoryRole
 
 Required: False
-Position: 6
+Position: 9
 Default value: Global Reader
 Accept pipeline input: False
 Accept wildcard characters: False
@@ -239,6 +329,26 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 ## OUTPUTS
 
 ## NOTES
+ROLES THIS COMMAND DOES NOT GRANT, AND SOMEONE MUST.
+The vault is RBAC-only, so
+access policies do nothing on it.
+Creating the vault here grants the caller 'Key
+Vault Certificates Officer' so the certificate step can run, and nothing else -
+everyone who will USE the module still needs granting, by whoever manages role
+assignments:
+
+  Key Vault Certificate User   - report users, on the vault.
+Read cert metadata+tags.
+  Key Vault Crypto User        - report users, on the vault.
+Sign the JWT client
+                                 assertion that Connect-Msec exchanges for a token.
+
+Both are needed together: metadata without signing cannot authenticate, and signing
+without metadata cannot find the certificate.
+'Key Vault Secrets User' is NOT needed
+and should not be granted - the certificate's private key never leaves the vault, and
+the module never reads it.
+
 AZURE DEVOPS IS NOT CONFIGURED HERE, AND CANNOT BE.
 There is no -Workload for it and
 nothing useful to grant.
