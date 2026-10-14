@@ -66,12 +66,23 @@ if ($dirty) {
 if (@(git -C $repoRoot tag -l $tag)) { throw "Tag $tag already exists." }
 
 # ---- 2. Version must move forwards -------------------------------------------------------
+# COMPARED AGAINST WHAT HAS BEEN RELEASED, NOT AGAINST THE MANIFEST. The manifest is bumped
+# BEFORE the release, so on the first release after a bump the two are equal and that is
+# correct, not a mistake. An earlier version of this guard compared against the manifest and
+# refused to release the very version it had just been bumped to.
+#
+# A tag is the record of a release, so an existing tag is the thing that must block.
 Step "Version"
 $current = (Import-PowerShellDataFile $manifestPath).ModuleVersion
-if ([version] $Version -le [version] $current) {
-    throw "Version $Version is not higher than the current $current. The Gallery accepts each version once."
+if ([version] $Version -lt [version] $current) {
+    throw "Version $Version is lower than the manifest's $current. Releases only move forwards."
 }
-Write-Host "  $current -> $Version"
+if ([version] $Version -eq [version] $current) {
+    Write-Host "  $Version - the manifest is already at this version and no tag exists for it"
+}
+else {
+    Write-Host "  $current -> $Version"
+}
 
 # ---- 3. CHANGELOG ------------------------------------------------------------------------
 # Written before the tests so a failure here costs nothing. A release with no entry tells

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.0] - 2026-10-12
+## [0.5.0] - 2026-10-14
 
 ### Added
 - `Get-MsecMySqlConfiguration` - one row per MySQL flexible server per server parameter.
