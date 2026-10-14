@@ -122,7 +122,7 @@ automatically**:
 Select-MsecAzureContext 'Production'
 
 # SubscriptionName : Production
-# TenantId         : 7a13befb-...
+# TenantId         : 00000000-0000-0000-0000-000000000000
 # Account          : you@contoso.com
 ```
 
