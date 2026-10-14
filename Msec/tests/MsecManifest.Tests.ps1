@@ -7,21 +7,35 @@
 # test, generates its help, and is simply absent when someone imports the module. That has
 # happened here.
 #
-# These two tests compare the filesystem to the manifest, from OUTSIDE the module, which is the
+# These tests compare the filesystem to the manifest, from OUTSIDE the module, which is the
 # only place the discrepancy is visible.
+#
+# The version tests exist for a different silent failure. THE RELEASE VERSION COMES FROM THE
+# GIT TAG, NOT FROM THIS MANIFEST: .github/workflows/publish.yml triggers on 'v*' and derives
+# the version from the tag name. Nothing stopped the manifest from being left behind, and the
+# publish workflow patched the mismatch for its own build and carried on - so the Gallery got
+# the right version while the repo kept describing one it never shipped. CI runs on every push
+# and pull request, and a tag is neither, so this is the last place a forgotten bump is cheap
+# to catch.
 
 BeforeAll {
     $script:ModuleRoot   = Join-Path $PSScriptRoot '..'
-    $script:ManifestPath = Join-Path $script:ModuleRoot 'msec.psd1'
+    $script:ManifestPath = Join-Path $script:ModuleRoot 'Msec.psd1'
 
     $script:Exported = @((Test-ModuleManifest -Path $script:ManifestPath -ErrorAction Stop).ExportedFunctions.Keys)
     $script:PublicFunctions = @(
         Get-ChildItem -Path (Join-Path $script:ModuleRoot 'public') -Filter '*.ps1' -File |
             ForEach-Object BaseName
     )
+
+    $script:Version   = (Import-PowerShellDataFile -Path $script:ManifestPath).ModuleVersion
+    $script:Changelog = Get-Content -Path (Join-Path $script:ModuleRoot '..' 'CHANGELOG.md') -Raw
+    # Headings are '## [0.5.0] - 2026-10-12'. Captured in file order, which is newest first.
+    $script:LoggedVersions = @([regex]::Matches($script:Changelog, '(?m)^##\s*\[(\d+\.\d+\.\d+(?:\.\d+)?)\]') |
+                               ForEach-Object { $_.Groups[1].Value })
 }
 
-Describe 'msec.psd1' {
+Describe 'Msec.psd1' {
     It 'exports every command in Public/' {
         # The failure this exists for: the file is there, the function is defined, the tests
         # pass, and Get-Command finds nothing because the manifest was never updated.
@@ -45,5 +59,28 @@ Describe 'msec.psd1' {
             $content = Get-Content -Path $path -Raw
             $content | Should -Match "function\s+$([regex]::Escape($name))\s*\{" -Because "$name.ps1 should define function $name"
         }
+    }
+}
+
+Describe 'Msec.psd1 version' {
+    It 'has a CHANGELOG entry for the version in the manifest' {
+        # Someone deciding whether to upgrade reads the CHANGELOG, and a release with no entry
+        # tells them nothing about what changed or whether it breaks them. The manifest is the
+        # only version this repo states, so it is the one that must be documented.
+        $script:LoggedVersions |
+            Should -Contain $script:Version -Because "CHANGELOG.md needs a '## [$($script:Version)]' heading before $($script:Version) can be released"
+    }
+
+    It 'has the manifest version at the top of the CHANGELOG' {
+        # Catches a bump that went backwards, or a typo like 0.50 for 0.5.0: both leave a valid
+        # heading somewhere in the file while the newest entry describes something else.
+        $script:LoggedVersions | Select-Object -First 1 |
+            Should -Be $script:Version -Because 'the newest CHANGELOG entry must be the version being developed'
+    }
+
+    It 'is a version the Gallery will accept' {
+        # A malformed version reaches the Gallery as a permanent, unlistable release. The
+        # publish workflow rejects one too, but that is after the tag has been pushed.
+        "$($script:Version)" | Should -Match '^\d+\.\d+\.\d+(\.\d+)?$'
     }
 }
