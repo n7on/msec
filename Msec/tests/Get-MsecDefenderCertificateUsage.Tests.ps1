@@ -12,7 +12,7 @@
 #   - SignerHash is passed through verbatim: it is the thumbprint a Defender indicator takes.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 }
 AfterAll { Remove-Module Msec -Force -ErrorAction SilentlyContinue }
 

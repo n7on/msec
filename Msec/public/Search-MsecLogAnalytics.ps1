@@ -10,7 +10,7 @@ function Search-MsecLogAnalytics {
 
         The query is loaded by convention from:
 
-            msec/kql/Law/<Subject>/<Name>.kql
+            Msec/kql/Law/<Subject>/<Name>.kql
 
         For example, Search-MsecLogAnalytics -Subject Waf loads Kql/Law/Waf/All.kql. Each
         subject folder has at least an All.kql; named variants (e.g. "TopRules.kql") live
@@ -128,12 +128,16 @@ function Search-MsecLogAnalytics {
     [CmdletBinding(DefaultParameterSetName = 'Days')]
     param(
         # Tab-completes from every folder under Kql/Law that contains at least one .kql file.
+        # Not mandatory: -Query is the alternative, and exactly one of the two is required.
+        # That is checked at run time rather than through parameter sets, which already split
+        # on the time window - adding a second dimension would make four sets to express one
+        # either/or.
         #
         # NB: the completer scriptblock runs in PowerShell's completion-engine context, NOT in
         # the module's session state, so $script:MsecModuleRoot does NOT resolve here even
         # though it does inside the function body. Look the base path up via Get-Module - a
         # cheap dictionary lookup, not a load. Same trap as Search-MsecAzureResourceGraph.
-        [Parameter(Mandatory)]
+        [Parameter()]
         [ArgumentCompleter({
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
             $base = (Get-Module Msec).ModuleBase
@@ -245,6 +249,16 @@ function Search-MsecLogAnalytics {
         })]
         [timespan] $Timespan,
 
+        # RAW KQL, for the questions no bundled file answers. Mirrors -Query on
+        # Search-MsecDefenderHunting, which is the precedent in this module.
+        #
+        # A bundled .kql is the better home for anything asked twice: it is reviewable,
+        # diffable and tab-completable. This exists because the alternative was reaching past
+        # the module to Invoke-AzOperationalInsightsQuery, which is how a whole analysis ends
+        # up outside the thing that is supposed to hold it.
+        [Parameter()]
+        [string] $Query,
+
         [Parameter()]
         [ValidateRange(1, [int]::MaxValue)]
         [int] $MaxRows = 50000
@@ -254,11 +268,24 @@ function Search-MsecLogAnalytics {
         throw 'No Azure context. Run Connect-AzAccount before Search-MsecLogAnalytics.'
     }
 
-    $path = Join-Path $script:MsecModuleRoot "kql/Law/$Subject/$Name.kql"
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "KQL query file not found: $path"
+    # Exactly one source. Both would be ambiguous; neither leaves nothing to run.
+    if ($Subject -and $Query) {
+        throw 'Specify -Subject (a bundled query) or -Query (raw KQL), not both.'
     }
-    $query = Get-Content -LiteralPath $path -Raw
+    if (-not $Subject -and -not $Query) {
+        throw 'Specify -Subject (a bundled query) or -Query (raw KQL).'
+    }
+
+    if ($Query) {
+        $query = $Query
+    }
+    else {
+        $path = Join-Path $script:MsecModuleRoot "kql/Law/$Subject/$Name.kql"
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "KQL query file not found: $path"
+        }
+        $query = Get-Content -LiteralPath $path -Raw
+    }
 
     # Resolve the workspace through the bundled Kql/Graph/LogAnalytics/All.kql query, run by
     # Search-MsecAzureResourceGraph. Not Get-AzOperationalInsightsWorkspace, which needs the

@@ -19,7 +19,7 @@
 #   query fails to parse.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 }
 AfterAll {
     Remove-Module msec -Force -ErrorAction SilentlyContinue

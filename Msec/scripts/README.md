@@ -54,7 +54,7 @@ Each remediation is a folder holding both halves plus a README covering the
 settings it needs and the safety rails it relies on. Detection and remediation
 are separate uploads and nothing in Intune enforces that they agree, so anything
 configured in both — the account to act on, most obviously — is guarded by a test
-in `msec/tests/IntuneRemediationScripts.Tests.ps1`.
+in `Msec/tests/IntuneRemediationScripts.Tests.ps1`.
 
 Future channels follow the same shape — one folder per channel, OS subfolders
 inside:

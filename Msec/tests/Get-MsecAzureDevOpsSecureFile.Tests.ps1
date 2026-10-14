@@ -10,7 +10,7 @@
 # the guess can be checked rather than trusted - a '.key' could be anything.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 }
 

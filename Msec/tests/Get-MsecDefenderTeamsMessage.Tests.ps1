@@ -15,7 +15,7 @@
 #   5. Days must be capped at the 30-day hunting retention.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 }
 

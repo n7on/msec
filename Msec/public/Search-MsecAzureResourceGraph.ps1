@@ -6,7 +6,7 @@ function Search-MsecAzureResourceGraph {
     .DESCRIPTION
         The query is loaded by convention from:
 
-            msec/kql/Graph/<ResourceType>/<Name>.kql
+            Msec/kql/Graph/<ResourceType>/<Name>.kql
 
         For example, Search-MsecAzureResourceGraph -ResourceType VM loads Kql/Graph/VM/All.kql. Each
         resource-type folder has at least an All.kql; named variants (e.g. "Running.kql")

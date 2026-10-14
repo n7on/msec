@@ -16,7 +16,7 @@
 #     scope, which is not implied by any of the other Intune permissions the module holds.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 
     $script:TestThumbBytes = [byte[]](1..20)

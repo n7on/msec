@@ -11,7 +11,7 @@
 #   - Entries are nested at varying depths, so the walker must not assume a fixed shape.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 }
 AfterAll { Remove-Module Msec -Force -ErrorAction SilentlyContinue }
 

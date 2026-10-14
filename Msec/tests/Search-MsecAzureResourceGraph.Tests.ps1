@@ -6,7 +6,7 @@
 # would miss because it inherits the module's $script: state).
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 
     # Redirect the completion cache for the whole file. An unscoped Search-MsecAzureResourceGraph

@@ -14,7 +14,7 @@
 #   - 403 must blame the user's scope, not the app's.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 }
 AfterAll { Remove-Module Msec -Force -ErrorAction SilentlyContinue }
 

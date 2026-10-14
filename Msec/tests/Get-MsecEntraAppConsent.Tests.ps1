@@ -13,7 +13,7 @@
 # permissions nobody could enumerate must never read as an app with none.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 }
 

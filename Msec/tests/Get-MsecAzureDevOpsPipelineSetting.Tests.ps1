@@ -13,7 +13,7 @@
 # promoted - that is the mechanism working, and it only works if unknown keys survive.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 }
 

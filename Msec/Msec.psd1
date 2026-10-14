@@ -1,5 +1,5 @@
 @{
-    RootModule        = 'msec.psm1'
+    RootModule        = 'Msec.psm1'
     ModuleVersion     = '0.5.0'
     GUID              = '5a8c1f2b-9d4e-4b7c-8a3f-1e6d2b9c4a7f'
     Author            = 'Anton Lindstrom'
@@ -33,7 +33,7 @@
     # here as well is what a consumer who does `Import-Module Msec` by name gets, and the
     # double load is harmless - the second registration replaces the first for the same
     # type names.
-    FormatsToProcess  = 'msec.format.ps1xml'
+    FormatsToProcess  = 'Msec.format.ps1xml'
 
     FunctionsToExport = @(
         'New-MsecApp',
@@ -86,7 +86,10 @@
         'Get-MsecIntuneReusableSetting',
         'Get-MsecIntuneAuditEvent',
         'Get-MsecIntuneDevice',
+        'Get-MsecIntuneDeviceCompliance',
+        'Measure-MsecDefenderTriageAgreement',
         'Get-MsecIntuneScriptResult',
+        'Get-MsecMySqlConfiguration',
         'Get-MsecEntraConditionalAccessPolicy',
         'Get-MsecEntraConditionalAccessChange',
         'Get-MsecEntraConditionalAccessSignInLog',
@@ -111,6 +114,9 @@
         'Get-MsecEntraPimActivation',
         'Get-MsecEntraPimAlert',
         'Get-MsecEntraAuthenticationMethod',
+        'Get-MsecEntraGuest',
+        'Get-MsecEntraCrossTenantAccess',
+        'Get-MsecEntraNamedLocation',
         'Get-MsecEntraAppCredential',
         'Get-MsecEntraAppConsent',
         'Get-MsecEntraMfaRegistration',
@@ -214,7 +220,7 @@ v0.3.0
 - Azure RBAC: Get-MsecAzureRoleAssignment across every subscription, with role and principal
   names resolved and deleted principals kept rather than dropped.
 - FIXED ON LINUX: the module folder and manifest are lowercase, matching the Gallery id. Before
-  this, Install-Module created msec/<version>/Msec.psd1 and Import-Module failed on Linux with
+  this, Install-Module created Msec/<version>/Msec.psd1 and Import-Module failed on Linux with
   "no valid module file was found in any module directory" - a module that installed fine and
   could not be loaded. macOS and Windows were unaffected.
 - The Azure DevOps commands are now named Get-MsecAzureDevOps* rather than Get-MsecAdo*.

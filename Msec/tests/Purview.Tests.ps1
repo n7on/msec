@@ -17,7 +17,7 @@
 #   A POLICY'S Mode IS NOT ITS Enabled FLAG. Only 'Enable' stops anything.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     # The Security & Compliance cmdlets do not exist without a live session, so they are stubbed
     # globally here purely so Pester has something to mock.

@@ -15,7 +15,7 @@
 
 BeforeAll {
     $script:StubbedGraphCommands = @()
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     # Microsoft.Graph.Authentication is NOT a dependency of msec - only Connect-MsecAdmin needs
     # it, and it checks at run time. It is preinstalled on the Windows and Ubuntu GitHub images

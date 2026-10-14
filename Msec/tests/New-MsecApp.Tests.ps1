@@ -11,7 +11,7 @@
 # exactly that.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 
     # Passed as TEXT and rebuilt inside InModuleScope - a scriptblock stays bound to the
@@ -301,12 +301,12 @@ Describe 'New-MsecApp' {
             # context stands for is a GRAPH reduction; a cloud with no Defender at all skips
             # that resource entirely rather than finding its roles missing.
             @($out.Result.GrantedNow).Count | Should -Be 5
-            # The sixteen Graph roles that do not exist in this cloud are named rather than
+            # The eighteen Graph roles that do not exist in this cloud are named rather than
             # silently lost.
             # This count is deliberately literal: it has to be updated by hand whenever a
             # permission is added to $resources, which is the point - a role that vanishes
             # from the list should fail a test rather than quietly stop being requested.
-            @($out.Result.UnavailableRoles).Count | Should -Be 16
+            @($out.Result.UnavailableRoles).Count | Should -Be 18
             ($out.Warnings -join "`n") | Should -Match 'not available'
             ($out.Warnings -join "`n") | Should -Match 'Group\.Read\.All'
         }

@@ -16,7 +16,7 @@
 #   against a domain list matches nothing and reports every forward as internal.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     # Only stub what is genuinely missing, and remember what was stubbed, so this file never
     # replaces a stub another test file depends on. Get-EXOMailbox carries the same parameter

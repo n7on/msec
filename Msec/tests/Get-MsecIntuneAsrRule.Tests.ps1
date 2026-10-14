@@ -14,7 +14,7 @@
 #   - A rule no policy configures must still be emitted, with Mode $null rather than 'off'.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
     $script:TestThumbBytes = [byte[]](1..20)
 }

@@ -14,7 +14,7 @@
 #   - an empty result WARNS, because 30-day audit retention means silence is not stability
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 }
 AfterAll { Remove-Module Msec -Force -ErrorAction SilentlyContinue }
 

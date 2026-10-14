@@ -4,7 +4,7 @@
 # Resource Graph and its two failure modes, and the invariants the bundled Law queries rely on.
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 
     # Redirect the completion cache for the whole file. Every test here resolves a workspace,
@@ -271,5 +271,35 @@ Describe 'Kql/Law bundled queries' {
         # 0xc0000064 for the same class of value.
         $code | Should -Match 'tolower\('
         $query | Should -Match 'two code spaces'
+    }
+}
+
+Describe 'Search-MsecLogAnalytics -Query' {
+
+    BeforeEach {
+        InModuleScope msec {
+            Mock Get-AzContext { [pscustomobject]@{ Subscription = @{ Id = 's1' } } }
+        }
+    }
+
+    It 'requires exactly one of -Subject and -Query' {
+        # Both is ambiguous; neither leaves nothing to run. Checked at run time rather than
+        # through parameter sets, which already split on the time window.
+        { Search-MsecLogAnalytics -WorkspaceName 'w' } |
+            Should -Throw '*-Subject*or -Query*'
+        { Search-MsecLogAnalytics -WorkspaceName 'w' -Subject 'Waf' -Query 'Heartbeat' } |
+            Should -Throw '*not both*'
+    }
+
+    It 'does not look for a bundled .kql file when -Query is given' {
+        # The file lookup throws "KQL query file not found" on a missing path, so reaching it
+        # at all would mean -Query was ignored. The call still fails further on (no real Azure
+        # context here) - what matters is WHERE it failed, so the message is inspected rather
+        # than asserting no exception at all.
+        $err = $null
+        try { Search-MsecLogAnalytics -WorkspaceName 'w' -Query 'Heartbeat | take 1' }
+        catch { $err = $_.Exception.Message }
+        $err | Should -Not -BeNullOrEmpty
+        $err | Should -Not -Match 'KQL query file not found'
     }
 }

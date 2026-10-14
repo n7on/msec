@@ -1,5 +1,5 @@
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psd1') -Force
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psd1') -Force
 
     # Defined here, not in the Describe body: a variable set at discovery time is gone by the
     # time an It runs, which reads as the command returning nothing rather than as a test bug.

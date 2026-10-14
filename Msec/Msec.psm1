@@ -54,7 +54,7 @@ $script:MsecGlobalAdministratorTemplateId = '62e90394-69f5-4237-9190-012177145e1
 # imports Msec.psm1 DIRECTLY - a manifest key would be skipped on that path, and the views
 # would silently not apply in exactly the place they are verified. One mechanism, one code
 # path, works for both import styles.
-$msecFormatFile = Join-Path $PSScriptRoot 'msec.format.ps1xml'
+$msecFormatFile = Join-Path $PSScriptRoot 'Msec.format.ps1xml'
 if (Test-Path -LiteralPath $msecFormatFile) {
     # -PrependPath so these win over anything already registered for the same type names,
     # which matters on a re-import during development.

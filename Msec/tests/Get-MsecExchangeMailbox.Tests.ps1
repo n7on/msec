@@ -16,7 +16,7 @@
 
 BeforeAll {
     $script:StubbedExoCommands = @()
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     # ExchangeOnlineManagement is not a dependency of msec, and is absent from some CI images.
     # Pester's Mock needs the command to EXIST; stubs carry real parameter names so any

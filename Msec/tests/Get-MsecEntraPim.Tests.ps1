@@ -16,7 +16,7 @@
 #   A PIM alert that is not firing is a MEASUREMENT, not an absence - so IsActive carries it
 #   rather than the alert being dropped from the output.
 
-BeforeAll { Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop }
+BeforeAll { Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop }
 AfterAll { Remove-Module msec -Force -ErrorAction SilentlyContinue }
 
 Describe 'Get-MsecEntraPimActivation' {

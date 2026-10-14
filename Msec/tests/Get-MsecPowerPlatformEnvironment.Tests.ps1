@@ -12,7 +12,7 @@
 # And the usual one: policies unreadable must leave IsCoveredByDlp null, never false.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     $script:StubbedAz = @()
     $azStubs = @{

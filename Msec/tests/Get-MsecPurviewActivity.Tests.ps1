@@ -19,7 +19,7 @@
 # output buckets everything under one blank key; and SensitivityLabel is a bare GUID.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     # Compliance cmdlets do not exist without a live session; stubbed so Pester can mock them.
     function global:Export-ActivityExplorerData {

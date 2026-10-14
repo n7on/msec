@@ -17,7 +17,7 @@
 $script:HasTeams = $null -ne (Get-Module -ListAvailable MicrosoftTeams)
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'msec.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'Msec.psm1'
     Import-Module $modulePath -Force -ErrorAction Stop
 }
 

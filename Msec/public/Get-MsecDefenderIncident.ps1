@@ -75,15 +75,27 @@ function Get-MsecDefenderIncident {
 
         [switch] $ExcludeRedirected,
 
+        # NO DATE FILTER AT ALL, for "what is open, however old". -Days caps at 365, so an
+        # incident older than that is invisible rather than merely old - which is how a
+        # backlog gets reported as empty. Bounded by Graph's own retention, nothing here.
+        [Parameter()]
+        [switch] $AnyAge,
+
         [switch] $IncludeAlerts
     )
 
     Assert-MsecSession
 
-    $startStr = (Get-Date).ToUniversalTime().AddDays(-$Days).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $path = if ($AnyAge) {
+        '/v1.0/security/incidents'
+    }
+    else {
+        $startStr = (Get-Date).ToUniversalTime().AddDays(-$Days).ToString('yyyy-MM-ddTHH:mm:ssZ')
+        "/v1.0/security/incidents?`$filter=createdDateTime ge $startStr"
+    }
 
     try {
-        $incidents = @(Invoke-MsecGraphRequest -Path "/v1.0/security/incidents?`$filter=createdDateTime ge $startStr" -All)
+        $incidents = @(Invoke-MsecGraphRequest -Path $path -All)
     }
     catch {
         if ($_.Exception.Message -match '403|Forbidden') {
@@ -107,11 +119,34 @@ function Get-MsecDefenderIncident {
 
         $alertCount = $null
         $sources = $null
+        $alertRows = @()
         if ($IncludeAlerts) {
             try {
                 $alerts = @(Invoke-MsecGraphRequest -Path "/v1.0/security/incidents/$($i.id)/alerts" -All)
                 $alertCount = $alerts.Count
                 $sources = (@($alerts.serviceSource | Where-Object { $_ } | Sort-Object -Unique) -join '; ')
+                # The alerts THEMSELVES, not just a count of them. Without this every caller
+                # re-fetches /security/alerts_v2 and joins on IncidentId by hand - slower, and
+                # a join each of them has to get right separately.
+                $alertRows = @(foreach ($al in $alerts) {
+                    [PSCustomObject]@{
+                        Id             = [string]$al.id
+                        Title          = [string]$al.title
+                        Severity       = [string]$al.severity
+                        Status         = [string]$al.status
+                        Classification = [string]$al.classification
+                        Determination  = [string]$al.determination
+                        ServiceSource  = [string]$al.serviceSource
+                        Evidence       = @(foreach ($e in @($al.evidence)) {
+                            $k = ([string]$e.'@odata.type') -replace '#microsoft\.graph\.security\.', '' -replace 'Evidence$', ''
+                            $w = @($e.deviceDnsName, $e.hostName, $e.userPrincipalName,
+                                   $e.userAccount.userPrincipalName, $e.userAccount.accountName,
+                                   $e.ipAddress, $e.fileDetails.fileName, $e.url,
+                                   $e.primaryAddress) | Where-Object { $_ } | Select-Object -First 1
+                            if ($w) { "${k}: $w" } else { $k }
+                        })
+                    }
+                })
             }
             catch {
                 # $null rather than 0: an incident whose alerts could not be read has not been
@@ -135,6 +170,8 @@ function Get-MsecDefenderIncident {
             ResolveDays            = $resolveDays
             AlertCount             = $alertCount
             AlertSources           = $sources
+            # Populated only with -IncludeAlerts; an empty array otherwise, never null.
+            Alerts                 = @($alertRows)
             # Set when this incident was merged INTO another - see the help.
             RedirectedToIncidentId = [string] $i.redirectIncidentId
             Tags                   = (@(@($i.customTags) + @($i.systemTags) | Where-Object { $_ }) -join '; ')

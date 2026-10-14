@@ -39,7 +39,8 @@ function New-MsecApp {
                              User.Read.All, Group.Read.All, Application.Read.All,
                              PrivilegedEligibilitySchedule.Read.AzureADGroup,
                              EntitlementManagement.Read.All,
-                             RoleManagementAlert.Read.Directory
+                             RoleManagementAlert.Read.Directory,
+                             IdentityRiskyUser.Read.All, IdentityRiskEvent.Read.All
           - Office 365 Exchange Online: Exchange.ManageAsApp - only with -Workload Exchange,
             and NOT sufficient on its own; see the directory role note below.
           - Skype and Teams Tenant Admin API: application_access - only with -Workload Teams.
@@ -332,7 +333,19 @@ function New-MsecApp {
                 # holding Global Reader and 20 other Graph permissions. These findings reach
                 # neither Defender XDR nor Sentinel, so without the grant they are visible only
                 # in the PIM blade.
-                'RoleManagementAlert.Read.Directory'
+                'RoleManagementAlert.Read.Directory',
+                # Identity Protection: the risk signals Entra raises about accounts and
+                # sign-ins - leaked credentials, impossible travel, anonymous IP, token
+                # anomalies. TWO PERMISSIONS, NOT ONE, because they answer different
+                # questions and neither implies the other: IdentityRiskyUser.Read.All is the
+                # standing state of an account (is this user currently at risk, and was the
+                # risk dismissed or remediated), IdentityRiskEvent.Read.All is the individual
+                # detections behind it (what fired, when, from where). A report built on the
+                # user half alone can say someone is risky but not why; on the event half
+                # alone it can list detections while missing that an admin already dismissed
+                # them.
+                'IdentityRiskyUser.Read.All',
+                'IdentityRiskEvent.Read.All'
             )
         }
     )

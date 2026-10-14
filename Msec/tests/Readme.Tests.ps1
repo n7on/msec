@@ -7,7 +7,7 @@
 # it, while the command list did not have it at all.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
     $script:RepoRoot = Join-Path $PSScriptRoot '..' '..'
     $script:Readme   = Join-Path $script:RepoRoot 'README.md'
 

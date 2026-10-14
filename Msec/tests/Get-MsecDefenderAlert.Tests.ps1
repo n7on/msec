@@ -16,7 +16,7 @@
 #   workload called that. It is passed through verbatim rather than guessed at.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 }
 AfterAll { Remove-Module msec -Force -ErrorAction SilentlyContinue }
 
@@ -131,5 +131,207 @@ Describe 'Get-MsecDefenderAlert' {
         $valid | Should -Contain 'new'
         $valid | Should -Not -Contain 'active'
         $valid | Should -Not -Contain 'redirected'
+    }
+}
+
+Describe 'Get-MsecDefenderAlert triage selection' {
+
+    BeforeEach {
+        InModuleScope msec {
+            Mock Assert-MsecSession {}
+            $script:AlertQueryPath = $null
+            $script:TestAlerts = @(
+                @{ id = 'a1'; title = 'Old alert worked last week'; severity = 'low'; status = 'resolved'
+                   classification = 'falsePositive'; determination = 'notMalicious'
+                   assignedTo = 'analyst@contoso.com'; serviceSource = 'microsoftDefenderForEndpoint'
+                   createdDateTime = '2025-01-01T00:00:00Z'
+                   evidence = @(
+                       @{ '@odata.type' = '#microsoft.graph.security.deviceEvidence'
+                          deviceDnsName = 'VIE0001'; verdict = 'suspicious' }
+                       @{ '@odata.type' = '#microsoft.graph.security.userEvidence'
+                          userAccount = @{ userPrincipalName = 'alex@contoso.com' }; verdict = 'unknown' }
+                   ) }
+                @{ id = 'a2'; title = 'Suppressed'; severity = 'low'; status = 'resolved'
+                   classification = 'falsePositive'; determination = 'notMalicious'
+                   assignedTo = 'Suppression rule'; serviceSource = 'microsoftDefenderForEndpoint'
+                   createdDateTime = '2026-01-01T00:00:00Z'; evidence = @() }
+                @{ id = 'a3'; title = 'Untriaged'; severity = 'high'; status = 'new'
+                   classification = 'unknown'; determination = 'unknown'
+                   assignedTo = $null; serviceSource = 'microsoftDefenderForEndpoint'
+                   createdDateTime = '2026-01-01T00:00:00Z'; evidence = @() }
+            )
+            Mock Invoke-MsecGraphRequest {
+                $script:AlertQueryPath = $Path
+                return $script:TestAlerts
+            }
+        }
+    }
+
+    It '-UpdatedWithin queries lastUpdateDateTime instead of createdDateTime' {
+        # THE DEFECT THIS CLOSES. -Days finds alerts RAISED in a window, so an alert raised a
+        # year ago and triaged last week is absent from it - which made a tenant holding 507
+        # classified alerts read as having almost none.
+        InModuleScope msec {
+            Get-MsecDefenderAlert -UpdatedWithin 45 | Out-Null
+            $script:AlertQueryPath | Should -Match 'lastUpdateDateTime ge'
+            $script:AlertQueryPath | Should -Not -Match 'createdDateTime'
+        }
+    }
+
+    It 'defaults to createdDateTime when -UpdatedWithin is not given' {
+        InModuleScope msec {
+            Get-MsecDefenderAlert -Days 7 | Out-Null
+            $script:AlertQueryPath | Should -Match 'createdDateTime ge'
+            $script:AlertQueryPath | Should -Not -Match 'lastUpdateDateTime'
+        }
+    }
+
+    It '-UpdatedWithin REPLACES the created filter rather than ANDing with it' {
+        # ANDing would ask for alerts raised AND touched in the window, dropping every old
+        # alert worked recently - exactly the set -UpdatedWithin exists to find.
+        InModuleScope msec {
+            Get-MsecDefenderAlert -Days 7 -UpdatedWithin 45 | Out-Null
+            $script:AlertQueryPath | Should -Not -Match 'createdDateTime'
+        }
+    }
+
+    It '-TriagedBy selects a human analyst and excludes automation' {
+        # 'Suppression rule' and 'MdcAlertsResourceProvider' appear in assignedTo on hundreds
+        # of alerts. Treating those as verdicts means learning from a suppression rule.
+        InModuleScope msec {
+            (Get-MsecDefenderAlert -TriagedBy 'analyst@contoso.com').Id | Should -Be @('a1')
+        }
+    }
+
+    It '-Classification and -Determination filter the labelled set' {
+        InModuleScope msec {
+            (Get-MsecDefenderAlert -Classification falsePositive).Id | Should -Be @('a1', 'a2')
+            (Get-MsecDefenderAlert -Determination notMalicious).Id   | Should -Be @('a1', 'a2')
+            # 'unknown' is what an untouched alert carries, so this is the UNtriaged set.
+            (Get-MsecDefenderAlert -Classification unknown).Id       | Should -Be @('a3')
+        }
+    }
+
+    It 'flattens polymorphic evidence to readable identifiers' {
+        # Device, user, ip, file, mailbox and url evidence each carry different fields, so a
+        # single property cannot be read off them - hence the per-kind resolution.
+        InModuleScope msec {
+            $ev = (Get-MsecDefenderAlert | Where-Object Id -eq 'a1').Evidence
+            $ev | Should -Contain 'device: VIE0001 (suspicious)'
+            # verdict 'unknown' adds nothing, so it is left off rather than printed.
+            $ev | Should -Contain 'user: alex@contoso.com'
+        }
+    }
+
+    It 'leaves EvidenceCount and Evidence consistent when there is none' {
+        InModuleScope msec {
+            $a3 = Get-MsecDefenderAlert | Where-Object Id -eq 'a3'
+            $a3.EvidenceCount | Should -Be 0
+            @($a3.Evidence).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Get-MsecDefenderAlert -AnyAge' {
+
+    BeforeEach {
+        InModuleScope msec {
+            Mock Assert-MsecSession {}
+            $script:AlertQueryPath = $null
+            Mock Invoke-MsecGraphRequest {
+                $script:AlertQueryPath = $Path
+                return @(@{ id = 'a1'; title = 'T'; status = 'new'; severity = 'low'
+                            classification = 'unknown'; createdDateTime = '2024-01-01T00:00:00Z'
+                            evidence = @() })
+            }
+        }
+    }
+
+    It 'sends no date filter at all' {
+        # -Days 365 is NOT equivalent: an alert older than the cap is invisible rather than
+        # merely old, which is how an open backlog gets reported as empty.
+        InModuleScope msec {
+            Get-MsecDefenderAlert -AnyAge | Out-Null
+            $script:AlertQueryPath | Should -Not -Match 'filter'
+            $script:AlertQueryPath | Should -Not -Match 'createdDateTime'
+            $script:AlertQueryPath | Should -Not -Match 'lastUpdateDateTime'
+        }
+    }
+
+    It 'wins over both -Days and -UpdatedWithin rather than ANDing with them' {
+        InModuleScope msec {
+            Get-MsecDefenderAlert -AnyAge -Days 7 -UpdatedWithin 30 | Out-Null
+            $script:AlertQueryPath | Should -Not -Match 'filter'
+        }
+    }
+
+    It 'still applies the client-side filters' {
+        InModuleScope msec {
+            (Get-MsecDefenderAlert -AnyAge -Status new).Id      | Should -Be @('a1')
+            (Get-MsecDefenderAlert -AnyAge -Status resolved).Id  | Should -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Get-MsecDefenderIncident -AnyAge and attached alerts' {
+
+    BeforeEach {
+        InModuleScope msec {
+            Mock Assert-MsecSession {}
+            $script:IncQueryPath = $null
+            Mock Invoke-MsecGraphRequest {
+                if ($Path -like '*/alerts*') {
+                    return @(@{
+                        id = 'al1'; title = 'Malicious blob'; severity = 'high'; status = 'new'
+                        classification = 'unknown'; determination = 'unknown'
+                        serviceSource = 'microsoftDefenderForCloud'
+                        evidence = @(
+                            @{ '@odata.type' = '#microsoft.graph.security.userEvidence'
+                               userAccount = @{ userPrincipalName = 'alex@contoso.com' } }
+                            @{ '@odata.type' = '#microsoft.graph.security.ipEvidence'
+                               ipAddress = '203.0.113.9' }
+                        )
+                    })
+                }
+                $script:IncQueryPath = $Path
+                return @(@{ id = 'i1'; displayName = 'Blob incident'; severity = 'high'
+                            status = 'active'; createdDateTime = '2024-01-01T00:00:00Z' })
+            }
+        }
+    }
+
+    It '-AnyAge sends no date filter' {
+        InModuleScope msec {
+            Get-MsecDefenderIncident -AnyAge | Out-Null
+            $script:IncQueryPath | Should -Not -Match 'filter'
+        }
+    }
+
+    It '-IncludeAlerts attaches the alerts themselves, not just a count' {
+        # Without this every caller re-fetches alerts_v2 and joins on IncidentId by hand.
+        InModuleScope msec {
+            $i = Get-MsecDefenderIncident -AnyAge -IncludeAlerts
+            $i.AlertCount        | Should -Be 1
+            @($i.Alerts).Count   | Should -Be 1
+            $i.Alerts[0].Title   | Should -Be 'Malicious blob'
+            $i.Alerts[0].Status  | Should -Be 'new'
+        }
+    }
+
+    It 'flattens the attached alerts evidence the same way the alert command does' {
+        InModuleScope msec {
+            $ev = (Get-MsecDefenderIncident -AnyAge -IncludeAlerts).Alerts[0].Evidence
+            $ev | Should -Contain 'user: alex@contoso.com'
+            $ev | Should -Contain 'ip: 203.0.113.9'
+        }
+    }
+
+    It 'leaves Alerts empty rather than null when -IncludeAlerts is not used' {
+        # Empty and null are different things to a caller; an empty array is safe to iterate.
+        InModuleScope msec {
+            $i = Get-MsecDefenderIncident -AnyAge
+            @($i.Alerts).Count | Should -Be 0
+            $i.AlertCount      | Should -BeNullOrEmpty
+        }
     }
 }

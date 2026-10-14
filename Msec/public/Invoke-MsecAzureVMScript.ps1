@@ -33,7 +33,7 @@ function Invoke-MsecAzureVMScript {
         an Os property and the value is taken per-row.
 
     .PARAMETER ScriptName
-        Base name (no extension) of the script under msec/scripts/<Os>/. Must exist for
+        Base name (no extension) of the script under Msec/scripts/<Os>/. Must exist for
         every OS that comes down the pipeline - missing scripts produce a clear
         "<Os> script not found" error at first encounter.
 

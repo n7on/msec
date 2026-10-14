@@ -19,7 +19,7 @@
 # simple function has no common parameters - it would fail on the parameter, not on the data.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     foreach ($name in 'Get-AntiPhishPolicy','Get-AntiPhishRule','Get-SafeLinksPolicy','Get-SafeLinksRule',
                       'Get-SafeAttachmentPolicy','Get-SafeAttachmentRule','Get-HostedContentFilterPolicy',

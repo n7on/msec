@@ -770,5 +770,159 @@
         </TableRowEntries>
       </TableControl>
     </View>
+    <View>
+      <Name>MsecEntraGuest</Name>
+      <ViewSelectedBy>
+        <TypeName>MsecEntraGuest</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Mail</Label><Width>38</Width></TableColumnHeader>
+          <!-- 'pending' means the invitation was never redeemed: access granted to nobody. -->
+          <TableColumnHeader><Label>State</Label><Width>9</Width></TableColumnHeader>
+          <TableColumnHeader><Label>On</Label><Width>4</Width></TableColumnHeader>
+          <!--
+            'never' only where sign-in data was READABLE. Where it was not, the column reads
+            'n/a' rather than 'never' - the two must not look alike, because one is a deletion
+            candidate and the other is a missing permission.
+          -->
+          <TableColumnHeader><Label>LastSignIn</Label><Width>12</Width></TableColumnHeader>
+          <!-- NonInteractive here means the account is in use by tokens, not by a person. -->
+          <TableColumnHeader><Label>Kind</Label><Width>14</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Invited</Label><Width>8</Width><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Mail</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.InvitationState -eq 'PendingAcceptance') { 'pending' } else { 'accepted' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.AccountEnabled) { 'yes' } else { 'NO' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                  if (-not $_.SignInDataAvailable) { 'n/a' }
+                  elseif ($null -eq $_.LastSignInUtc) { 'never' }
+                  else { $_.LastSignInUtc.ToString('yyyy-MM-dd') }
+                </ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>LastSignInKind</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($null -eq $_.DaysSinceInvite) { '' } else { "$($_.DaysSinceInvite)d" }</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>MsecEntraCrossTenantAccess</Name>
+      <ViewSelectedBy>
+        <TypeName>MsecEntraCrossTenantAccess</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Tenant</Label><Width>34</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Inbound</Label><Width>8</Width></TableColumnHeader>
+          <!--
+            EFFECTIVE values, with '(inh)' marking the ones that merely follow the default.
+            A partner inheriting the default is not a partner set to false - it moves the
+            moment the default moves, and the two must not look the same.
+          -->
+          <TableColumnHeader><Label>TrustMFA</Label><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Label>TrustDevice</Label><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Scope</Label><Width>8</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>TenantName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>InboundB2B</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>$(if ($_.TrustsMfa) { 'yes' } else { 'no' }) + $(if ($_.IsInherited) { ' (inh)' } else { '' })</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>$(if ($_.TrustsCompliantDevice) { 'yes' } else { 'no' }) + $(if ($_.IsInherited) { ' (inh)' } else { '' })</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>MsecEntraNamedLocation</Name>
+      <ViewSelectedBy>
+        <TypeName>MsecEntraNamedLocation</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Location</Label><Width>28</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Type</Label><Width>7</Width></TableColumnHeader>
+          <!-- Trust permits exclusion and lowers Identity Protection risk for sign-ins here. -->
+          <TableColumnHeader><Label>Trusted</Label><Width>7</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Ranges</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <!--
+            'unused' is the point of the column: a location no policy names does nothing at
+            all, so a trusted-but-unused one is inert rather than alarming.
+          -->
+          <TableColumnHeader><Label>UsedBy</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>DisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>LocationType</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.IsTrusted) { 'yes' } else { 'no' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>RangeCount</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if (-not $_.IsReferenced) { 'unused' } else { ($_.UsedByPolicy | Select-Object -First 2) -join '; ' }</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>MsecIntuneDeviceCompliance</Name>
+      <ViewSelectedBy>
+        <TypeName>MsecIntuneDeviceCompliance</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Device</Label><Width>22</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Os</Label><Width>8</Width></TableColumnHeader>
+          <!--
+            SECURITY vs stale. 'Unattributed' is neither: the device is flagged non-compliant
+            and the reason could not be read, which must not read as nothing-wrong.
+          -->
+          <TableColumnHeader><Label>Category</Label><Width>15</Width></TableColumnHeader>
+          <!-- A device that has not checked in cannot be remediated by Intune at all. -->
+          <TableColumnHeader><Label>Quiet</Label><Width>6</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Setting</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>DeviceName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Os</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.Category -eq 'SecurityControl') { 'SECURITY' } else { $_.Category }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($null -eq $_.DaysQuiet) { '' } else { "$($_.DaysQuiet)d" }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.Setting) { $_.Setting -replace '^DefaultDeviceCompliancePolicy\.', '' } else { '(not reported)' }</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
   </ViewDefinitions>
 </Configuration>

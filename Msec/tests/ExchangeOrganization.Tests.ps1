@@ -14,7 +14,7 @@
 
 BeforeAll {
     $script:StubbedExoCommands = @()
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     $exoStubs = @{
         'Get-ConnectionInformation'        = { [CmdletBinding()] param() }

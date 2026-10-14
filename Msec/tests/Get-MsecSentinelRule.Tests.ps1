@@ -18,7 +18,7 @@
 #   all, so GroupingEnabled is $null; a Scheduled rule that has it switched off is $false.
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
 
     $script:StubbedAz = @()
     $azStubs = @{
@@ -40,6 +40,37 @@ AfterAll {
 }
 
 Describe 'Get-MsecSentinelRule' {
+
+    # Defined here, not in the Describe body: Pester runs the body during discovery, so a
+    # function declared there does not exist when the It blocks actually run.
+    BeforeAll {
+        function Get-RuleRows {
+            param([string] $Kql, [switch] $NoQuery)
+            InModuleScope msec -Parameters @{ Kql = $Kql; NoQuery = [bool] $NoQuery } {
+                # Assigned into module scope: a -Parameters variable is NOT in scope when the mock
+                # body below actually runs, and reading it there yields $null on every row.
+                $script:TestKql     = $Kql
+                $script:TestNoQuery = $NoQuery
+
+                Mock Get-AzOperationalInsightsWorkspace -MockWith {
+                    @([pscustomobject]@{ Name='ws'; ResourceGroupName='rg'; ResourceId='/subscriptions/sub-1/x' })
+                }
+                Mock Invoke-RestMethod -MockWith {
+                    if ("$Uri" -match 'onboardingStates') { [pscustomobject]@{ value = @(1) } }
+                    else {
+                        $props = if ($script:TestNoQuery) {
+                            [pscustomobject]@{ displayName='Fusion rule'; enabled=$true; severity='High' }
+                        }
+                        else {
+                            [pscustomobject]@{ displayName='Scheduled rule'; enabled=$true; severity='High'; query=$script:TestKql }
+                        }
+                        [pscustomobject]@{ value = @([pscustomobject]@{ name='r1'; kind='Scheduled'; properties=$props }) }
+                    }
+                }
+                Get-MsecSentinelRule
+            }
+        }
+    }
 
     BeforeEach {
         InModuleScope msec {
@@ -189,5 +220,125 @@ Describe 'Get-MsecSentinelRule' {
         $captured = InModuleScope msec { $script:captured }
 
         "$captured" | Should -Match 'MISSING from this output'
+    }
+    # ---- Query and QueryTables -------------------------------------------------------------
+    #
+    # QueryTables is a scan, not a KQL parser, and both of the regressions below came from a
+    # live workspace rather than from imagination. Every one of these is a shape that appeared
+    # in a real Content Hub or hand-written rule.
+
+    It 'carries the KQL itself and the table it reads' {
+        $rows = Get-RuleRows -Kql "SigninLogs`n| where ResultType == 0`n| summarize count() by UserPrincipalName"
+
+        $rows[0].Query       | Should -Match 'where ResultType'
+        $rows[0].QueryTables | Should -Be @('SigninLogs')
+    }
+
+    It 'reports Query as null, not empty string, on a rule that has no query of its own' {
+        # A Fusion or NRT rule's correlation is Microsoft's. An empty string would claim a
+        # query exists and happens to be blank.
+        $rows = Get-RuleRows -NoQuery
+
+        $rows[0].Query       | Should -BeNullOrEmpty
+        $rows[0].Query       | Should -Not -Be ''
+        $null -eq $rows[0].Query | Should -BeTrue
+        $rows[0].QueryTables | Should -BeNullOrEmpty
+    }
+
+    It 'excludes let-bound names, which read exactly like table references and are not' {
+        $kql = @'
+let Threshold = 3;
+let Blocked = AGWFirewallLogs | where Action == "Blocked" | distinct TransactionId;
+Blocked
+| where TransactionId != ""
+'@
+        $rows = Get-RuleRows -Kql $kql
+
+        # 'Blocked' begins a statement and is followed by a pipe - and is a local, not a table.
+        $rows[0].QueryTables | Should -Be @('AGWFirewallLogs')
+    }
+
+    It 'follows union legs and join operands inside parentheses' {
+        $kql = @'
+union isfuzzy=true
+  (AzureDiagnostics | where Category == "ApplicationGatewayFirewallLog" | project TimeGenerated),
+  (AGWFirewallLogs | project TimeGenerated)
+| join kind=inner (
+    AuditLogs
+    | where OperationName =~ "Add user"
+) on TimeGenerated
+'@
+        $rows = Get-RuleRows -Kql $kql
+
+        $rows[0].QueryTables | Should -Be @('AGWFirewallLogs', 'AuditLogs', 'AzureDiagnostics')
+    }
+
+    It 'does not report a union modifier fragment as a table' {
+        # REGRESSION. Matching an identifier after a bare 'union' keyword let the regex
+        # backtrack into 'isfuzzy=true' and report 'e' as the only table of three live WAF
+        # rules - while the two tables they actually read went missing.
+        $rows = Get-RuleRows -Kql 'union isfuzzy=true (AGWFirewallLogs | project TimeGenerated)'
+
+        $rows[0].QueryTables | Should -Be @('AGWFirewallLogs')
+        $rows[0].QueryTables | Should -Not -Contain 'e'
+    }
+
+    It 'does not report the trailing column of a summarize as a table' {
+        # REGRESSION. 'Uri' here is followed by a pipe exactly as a table reference would be.
+        # What rules it out is the character BEFORE it: a comma, not ';', '(', '{' or the
+        # start of the query.
+        $kql = @'
+AGWAccessSummary_CL
+| summarize Total = dcount(TransactionId) by clientIp_s = ClientIp, Uri
+| where Total >= 3
+'@
+        $rows = Get-RuleRows -Kql $kql
+
+        $rows[0].QueryTables | Should -Be @('AGWAccessSummary_CL')
+        $rows[0].QueryTables | Should -Not -Contain 'Uri'
+    }
+
+    It 'finds a table inside a user-defined function body' {
+        $kql = @'
+let awsFunc = (start:datetime) {
+  AuditLogs
+  | where TimeGenerated > start
+  | where Category =~ "RoleManagement"
+};
+awsFunc(ago(1h))
+'@
+        $rows = Get-RuleRows -Kql $kql
+
+        $rows[0].QueryTables | Should -Be @('AuditLogs')
+    }
+
+    It 'ignores table names in comments and in string literals' {
+        $kql = @'
+// This rule used to read AzureDiagnostics before the migration.
+SigninLogs
+| where ResultDescription == "see SecurityEvent for detail"
+'@
+        $rows = Get-RuleRows -Kql $kql
+
+        $rows[0].QueryTables | Should -Be @('SigninLogs')
+    }
+
+    It 'returns no tables when the rule names its table at run time' {
+        # DOCUMENTED LIMIT, not a bug to fix: the name is built from a string at execution
+        # time, so nothing in the text identifies it. The help says empty means 'none found'
+        # rather than 'reads nothing', which is why this is asserted rather than left to chance.
+        $kql = @'
+let aadFunc = (tableName:string){
+table(tableName)
+| where ResultType == "50057"
+};
+let aadSignin = aadFunc("SigninLogs");
+aadSignin
+'@
+        $rows = Get-RuleRows -Kql $kql
+
+        $rows[0].QueryTables | Should -BeNullOrEmpty
+        # The KQL is still there, so the dependency remains discoverable by reading it.
+        $rows[0].Query | Should -Match 'SigninLogs'
     }
 }
