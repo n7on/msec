@@ -80,6 +80,15 @@ jobs:
         shell: pwsh
         run: |
           $ProgressPreference = 'SilentlyContinue'
+          # PSGallery IS NOT REGISTERED ON EVERY RUNNER IMAGE. windows-latest stopped
+          # shipping the default registration, and Set-PSRepository then fails with
+          # "No repository with the name 'PSGallery' was found" during dependency
+          # install - before a single test runs, so it reads as the suite breaking
+          # when nothing in the module changed. Register-PSRepository -Default
+          # restores the stock entry and is a no-op where it already exists.
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
           Set-PSRepository PSGallery -InstallationPolicy Trusted
 
           # Publish-Module (PowerShellGet 2.x) packs through the NuGet package provider. If
