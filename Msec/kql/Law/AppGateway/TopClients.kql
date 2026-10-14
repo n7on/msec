@@ -1,0 +1,51 @@
+// One row per client IP: how much it asked for, how much of it did not exist, how many distinct
+// paths it tried, which hosts it reached and what it called itself. The view that identifies a
+// scanner without knowing in advance that there is one to look for.
+//
+// Loaded by Search-MsecLogAnalytics -Subject AppGateway -Name TopClients -WorkspaceName <ws>.
+//
+// WHY THIS EXISTS. An unauthorised Nessus scan ran for six days against production in two
+// regions before anyone looked at a client IP in aggregate. The detections fired - 23 alerts -
+// but each one showed a single sample path, usually "/", so they read as noise. The scan was
+// identified in minutes once the traffic was grouped BY CLIENT instead of by alert: 167,787
+// requests, 3,530 distinct missing paths, and a UserAgents column containing the string
+// "Nessus" and four Log4Shell probe payloads. Nothing about that needed a detection to exist.
+//
+// READS AGWAccessSummary_CL, NOT AGWAccessLogs. The raw access log is commonly moved to the
+// Basic plan - it is ~5.3 GB/day and can be 99% of a workspace's billable ingestion - and a
+// Basic table returns BadRequest to every ordinary KQL shape rather than returning nothing.
+// Same reasoning as ClientGeography.kql, which documents it at length.
+//
+// DISTINCTPATHS IS A MAX, NOT A SUM. It is a dcount computed per bin inside the summary rule,
+// so adding two bins together would double-count a path tried in both. The max across bins is
+// the defensible figure: "at least this many distinct paths in a single window".
+//
+// NOTFOUNDRATIO IS THE SCANNER TELL. A browser or an integration asks for things that exist.
+// Content discovery is mostly 404s by construction, so a ratio near 1 on any meaningful volume
+// is worth a look regardless of what the user agent claims to be. The reverse is not true: a
+// low ratio does not clear a client, it just means it was not enumerating.
+//
+// UserAgents, Hosts and SamplePaths are dynamic arrays per bin; make_set flattens them across
+// the window and take_any keeps the output readable. A scanner that spoofs a browser agent
+// still shows its shape in the ratio and the path count.
+AGWAccessSummary_CL
+| summarize
+    Requests      = sum(Requests),
+    NotFound      = sumif(Requests, StatusClass == "notfound"),
+    Ok            = sumif(Requests, StatusClass == "2xx"),
+    AuthFail      = sumif(Requests, StatusClass == "authfail"),
+    Other         = sumif(Requests, StatusClass == "other"),
+    MaxDistinctPaths = max(DistinctPaths),
+    Bytes         = sum(Bytes),
+    Bins          = count(),
+    FirstSeen     = min(TimeGenerated),
+    LastSeen      = max(TimeGenerated),
+    Hosts         = make_set(Hosts, 50),
+    UserAgents    = make_set(UserAgents, 20),
+    SamplePaths   = take_any(SamplePaths)
+    by ClientIp
+| extend NotFoundRatio = round(todouble(NotFound) / todouble(Requests), 3)
+| extend HostCount = array_length(Hosts)
+| project ClientIp, Requests, NotFound, NotFoundRatio, MaxDistinctPaths, Ok, AuthFail, Other,
+          HostCount, Bins, FirstSeen, LastSeen, Hosts, UserAgents, SamplePaths, Bytes
+| order by Requests desc

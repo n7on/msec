@@ -1,0 +1,81 @@
+// One row per Azure Database for MySQL flexible server: how its data at rest is encrypted, and
+// with whose key.
+//
+// Loaded by Search-MsecAzureResourceGraph -ResourceType MySQL -Name Encryption.
+//
+// AN EMPTY dataEncryption BLOCK MEANS SERVICE-MANAGED, NOT UNENCRYPTED, and getting that
+// backwards is the whole reason this file exists rather than a raw project of the property.
+// Flexible Server encrypts storage, backups and temporary files at rest with AES-256
+// unconditionally - there is no setting that turns it off and no such thing as a plaintext
+// server. What is configurable is WHOSE key: Microsoft's service-managed key by default, or a
+// customer-managed key (CMK) in Key Vault. Resource Graph omits properties.dataEncryption
+// entirely on a default server, so a report that reads "no dataEncryption => not encrypted"
+// invents a finding that cannot exist, and one that filters for it finds nothing and concludes
+// the estate is clean. Both are wrong. KeyType says which of the two it is.
+//
+// CMK IS A DURABILITY LIABILITY AS WELL AS A CONTROL. The server reads its key from Key Vault;
+// if the key is deleted, disabled, expired, or the vault's access is withdrawn, the server
+// becomes INACCESSIBLE and stays that way until the key is restored - this is a documented
+// state, not a theoretical one. So KeyVault, KeyName and the identity are projected alongside:
+// a CMK server whose vault is unknown to whoever operates it is the risk, not the reassurance.
+// Pair with KeyVault/All.kql to confirm the vault has purge protection and soft delete, which
+// Azure requires for CMK precisely because a purged key is unrecoverable.
+//
+// GEO-REDUNDANT BACKUP WITH CMK NEEDS A SECOND KEY, in the paired region, and a geo-backup
+// identity. GeoBackupKeyUri is empty on a server that has geo-redundant backup switched on and
+// no geo key configured, which is a gap worth seeing next to the primary key rather than in a
+// separate report.
+//
+// TLS AND require_secure_transport ARE NOT HERE, AND CANNOT BE. They are server PARAMETERS,
+// which live in the configurations child resource, and Resource Graph does not project it -
+// re-verified 2026-10-14 against 12 live servers: flexibleServers/configurations,
+// /firewallrules and /databases each return ZERO rows, and the parent row's properties bag
+// holds no parameter data either. So encryption in transit cannot be joined to encryption at
+// rest in one query, however much it belongs in one report. Reaching those values needs a
+// per-server ARM call to {serverId}/configurations?api-version=2023-12-30, which is a command,
+// not a .kql. Worth knowing before anyone spends an afternoon trying to extend this file:
+// require_secure_transport was found OFF on two production servers that way, and no Resource
+// Graph query could have shown it.
+//
+// The subscription lookup is inlined rather than hoisted into a `let`: Resource Graph supports
+// `let` for scalars only, not for tabular expressions. Same note as All.kql.
+
+Resources
+| where type =~ 'microsoft.dbformysql/flexibleservers'
+| extend Enc = properties.dataEncryption
+// 'ServiceManaged' is also what an absent block means - see the header.
+| extend KeyType = case(
+             tostring(Enc.type) =~ 'AzureKeyVault', 'CustomerManaged',
+             tostring(Enc.type) =~ 'SystemManaged', 'ServiceManaged',
+             isnull(Enc) or tostring(Enc.type) == '', 'ServiceManaged',
+             tostring(Enc.type))
+| extend PrimaryKeyUri = tostring(Enc.primaryKeyURI),
+         GeoBackupKeyUri = tostring(Enc.geoBackupKeyURI)
+| join kind=leftouter (
+    ResourceContainers
+    | where type =~ 'microsoft.resources/subscriptions'
+    | project subscriptionId, SubscriptionName = name
+  ) on subscriptionId
+| project Name              = name,
+          ResourceGroupName = resourceGroup,
+          // Never 'None'. Every flexible server encrypts at rest; this says with whose key.
+          KeyType,
+          EncryptedAtRest   = true,
+          // Parsed out of the key URI so a CMK server can be traced to its vault at a glance.
+          KeyVault          = iff(isempty(PrimaryKeyUri), '',
+                                  extract(@'https://([^.]+)\.vault', 1, PrimaryKeyUri)),
+          KeyName           = iff(isempty(PrimaryKeyUri), '',
+                                  extract(@'/keys/([^/]+)', 1, PrimaryKeyUri)),
+          // Empty on a CMK server with geo-redundant backup on = a missing paired-region key.
+          GeoBackupKeyUri,
+          GeoRedundantBackup = tostring(properties.backup.geoRedundantBackup),
+          // CMK reads the key as this identity; without it the server cannot start.
+          IdentityType      = tostring(identity.type),
+          UserAssignedCount = coalesce(array_length(bag_keys(identity.userAssignedIdentities)), 0),
+          State             = tostring(properties.state),
+          Version           = tostring(properties.version),
+          Location          = location,
+          SubscriptionName,
+          SubscriptionId    = subscriptionId,
+          Id                = id
+| order by KeyType asc, SubscriptionName asc, Name asc

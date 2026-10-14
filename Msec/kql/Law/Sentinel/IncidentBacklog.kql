@@ -1,0 +1,35 @@
+// Sentinel incidents at their LATEST state, bucketed by age - what is actually open, how old it
+// is, and how much has been closed. The answer to "do we have a years-old backlog".
+//
+// Loaded by Search-MsecLogAnalytics -Subject Sentinel -Name IncidentBacklog -WorkspaceName <ws>.
+//
+// SECURITYINCIDENT IS A CHANGE LOG, NOT AN INCIDENT LIST, and reading it without arg_max is the
+// mistake this file exists to prevent. Every status change, comment and reassignment writes a
+// new row, so a plain count answers "how many times did incidents change" - a number that looks
+// like a backlog and is not one. Measured on one workspace: 2,488 rows, 2,394 distinct
+// incidents, of which 2,359 were closed and 35 open. Counting rows would have reported the
+// backlog as 70x its real size.
+//
+// WHY NOT ASK DEFENDER XDR INSTEAD. Graph /security/incidents only surfaces recent incidents -
+// on the same tenant it returned nothing older than three weeks while this table held 21 months.
+// An "is there an old backlog" question answered from Graph alone comes back empty and sounds
+// definitive. Get-MsecDefenderIncident -AnyAge is the right call for the live set; this is the
+// right one for history.
+//
+// STATUS IS "New", "Active" or "Closed" - NOT the Defender XDR vocabulary. An incident can sit
+// in New indefinitely; New is not a synonym for recent, and the age buckets are what separate
+// the two.
+SecurityIncident
+| summarize arg_max(TimeGenerated, *) by IncidentNumber
+| extend AgeDays = datetime_diff('day', now(), CreatedTime)
+| extend AgeBucket = case(AgeDays > 730, "> 2 years",
+                          AgeDays > 365, "1-2 years",
+                          AgeDays > 180, "6-12 months",
+                          AgeDays > 90,  "3-6 months",
+                          AgeDays > 30,  "1-3 months",
+                                         "< 1 month")
+| summarize Incidents = count(),
+            Oldest    = min(CreatedTime),
+            Newest    = max(CreatedTime)
+            by Status, AgeBucket, Severity
+| order by Status asc, Incidents desc

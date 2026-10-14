@@ -1,0 +1,41 @@
+// Did a WAF exclusion actually take effect? One row per day per rule per matched variable, with
+// how many of those matches ended in a block.
+//
+// Loaded by Search-MsecLogAnalytics -Subject Waf -Name ExclusionCheck -WorkspaceName <ws>.
+//
+// WHY THIS EXISTS. An exclusion is deployed and someone asks "is it working?". The obvious
+// check - "are there still matches on that rule" - answers the wrong question twice over, and
+// this query exists to answer it properly.
+//
+// A MATCH IS NOT A BLOCK, AND ON CRS 3.x MOST RULES NEVER BLOCK ANYTHING. The OWASP Core Rule
+// Set is ANOMALY SCORING: an individual rule such as 932115 or 941101 logs Action="Matched" and
+// adds to a score, and a separate rule - 949110 "Inbound Anomaly Score Exceeded" - logs
+// Action="Blocked" once the total crosses the threshold. So a rule you excluded can show zero
+// blocks for its whole life and still be the reason a request was blocked, and conversely its
+// matches can continue harmlessly if the score never reaches the threshold. Measured on one
+// gateway: 932115 and 941101 logged Blocked=0 on every single day across a week, while 949110
+// blocked 58-73 requests a day on the same host.
+//
+// THE REAL TEST OF AN EXCLUSION IS THAT THE MATCH COUNT ON THE EXCLUDED VARIABLE GOES TO ZERO,
+// not that blocks stop. If matches continue on the variable you excluded, the exclusion did not
+// apply - wrong selector, wrong match operator, wrong rule set, or not deployed yet. Pair this
+// with BlockedAuth.kql, which shows whether real requests are still being blocked.
+//
+// Edit the Vars list to whatever the exclusion covers. Case matters in the log text, so both
+// casings are checked.
+// NO TIME FILTER HERE - the window is -Days (or -Timespan) and the service applies it
+// server-side. A window baked into the file is invisible at the call site and silently
+// INTERSECTS with the one the caller asked for, so -Days 30 would quietly return 14.
+let Vars = dynamic(["redirectUri", "referer", "Referer"]);
+AGWFirewallLogs
+| extend Detail = strcat(tostring(DetailedData), " ", tostring(DetailedMessage))
+| mv-apply V = Vars on (
+    where Detail contains tostring(V)
+    | project MatchedVar = tostring(V)
+  )
+| summarize Events = count(),
+            Blocked = countif(Action == "Blocked"),
+            Hosts   = make_set(Hostname, 5),
+            Clients = dcount(ClientIp)
+        by Day = format_datetime(bin(TimeGenerated, 1d), "yyyy-MM-dd"), RuleId, MatchedVar
+| order by Day asc, Events desc

@@ -1,6 +1,6 @@
 ---
-external help file: msec-help.xml
-Module Name: msec
+external help file: Msec-help.xml
+Module Name: Msec
 online version:
 schema: 2.0.0
 ---
@@ -70,7 +70,8 @@ Current required permissions (configured at the top of the function in $resource
                      User.Read.All, Group.Read.All, Application.Read.All,
                      PrivilegedEligibilitySchedule.Read.AzureADGroup,
                      EntitlementManagement.Read.All,
-                     RoleManagementAlert.Read.Directory
+                     RoleManagementAlert.Read.Directory,
+                     IdentityRiskyUser.Read.All, IdentityRiskEvent.Read.All
   - Office 365 Exchange Online: Exchange.ManageAsApp - only with -Workload Exchange,
     and NOT sufficient on its own; see the directory role note below.
   - Skype and Teams Tenant Admin API: application_access - only with -Workload Teams.

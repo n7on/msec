@@ -1,6 +1,6 @@
 ---
-external help file: msec-help.xml
-Module Name: msec
+external help file: Msec-help.xml
+Module Name: Msec
 online version:
 schema: 2.0.0
 ---
@@ -39,7 +39,20 @@ TriggerThreshold are what decide how much noise a rule makes.
 Alert grouping in
 particular is off by default on every Content Hub rule, and with it off each alert
 becomes its own incident - measured on one workspace, 0 of 48 rules had it enabled.
-The KQL is in Raw for the rules you actually want to read.
+
+QUERYTABLES IS A SCAN OF THE KQL, NOT A PARSE, AND EMPTY MEANS 'NONE FOUND'.
+It answers
+the question a rule list cannot otherwise answer - which rules read a table that holds
+no data, because such a rule is enabled, green, and can never fire.
+Comments, string
+literals and let-bound names are excluded; union legs, join operands and function
+bodies are followed.
+Measured against a live workspace it resolved 19 of 20 scheduled
+rules correctly.
+The twentieth builds its table name at run time - 'table(tableName)'
+fed from a string - which no scan of the text can see, so it comes back empty.
+Treat an
+empty list as 'nothing found', never as 'reads nothing'; Query has the KQL itself.
 
 RUNS AS THE SIGNED-IN USER, NOT AS THE msec APP.
 Sentinel is an Azure resource, so this
@@ -84,6 +97,16 @@ This is the join the
 command exists for.
 
 ### EXAMPLE 3
+```
+Get-MsecSentinelRule -EnabledOnly |
+    Where-Object { $_.QueryTables -contains 'SigninLogs' }
+```
+
+Which enabled rules depend on a given table.
+If that table is empty in this workspace,
+every rule listed here is switched on and cannot fire.
+
+### EXAMPLE 4
 ```
 Get-MsecSentinelRule -EnabledOnly |
     Group-Object Severity | Sort-Object Count -Descending

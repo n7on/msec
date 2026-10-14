@@ -4,7 +4,114 @@ All notable changes to this project will be documented in this file.
 
 ## [0.5.0] - 2026-10-12
 
+### Added
+- `Get-MsecMySqlConfiguration` - one row per MySQL flexible server per server parameter.
+
+  RESOURCE GRAPH CANNOT SEE SERVER PARAMETERS, which is why this is a command and not another
+  `.kql`. `flexibleServers/configurations`, `/firewallRules` and `/databases` each return zero
+  rows from the Resources table - re-verified against 12 live servers - and the parent row
+  carries no parameter data either. So "is TLS required" and "which protocol versions are
+  accepted" were invisible to every existing query in the module.
+
+  SOURCE, NOT `Value -ne DefaultValue`, IS WHAT SAYS SOMEONE CHANGED A PARAMETER, and building
+  the obvious version would have been wrong in both directions. Measured: a production server
+  with `require_secure_transport` at `ON`, default `ON`, and `source` `user-override` - set
+  deliberately, and invisible to a value-versus-default comparison. Across the estate: 5,230
+  parameters on 12 servers, 147 user-overrides.
+
+  Found on first run: two production servers accepting unencrypted connections
+  (`require_secure_transport = OFF`, default `ON`), and `block_encryption_mode = aes-128-ecb`
+  on all twelve - ECB being deterministic, which matters wherever `AES_ENCRYPT()` is used.
+
+  EVERY BOOLEAN ON THIS ENDPOINT IS A STRING AND `[bool] 'False'` IS `$true`, so a cast instead
+  of a comparison inverts every read-only flag silently. 1,935 of 5,230 parameters are
+  read-only, `binlog_encryption` among them - which is why encrypting the binary log is not an
+  option on this platform rather than a setting nobody turned on.
+
+- Bundled queries: `Graph/MySQL/Encryption.kql` (at-rest key ownership - an absent
+  `dataEncryption` block means service-managed, NOT unencrypted), and `Law/Waf/ExclusionCheck.kql`
+  and `Law/Waf/BlockedAuth.kql` for verifying a WAF exclusion actually took effect. CRS 3.x is
+  anomaly scoring: the excluded rule logs `Matched` and `949110` logs `Blocked`, so "no blocks
+  on the rule" is not evidence the exclusion worked - the match count on the excluded variable
+  going to zero is.
+
 ### Changed
+- `Get-MsecSentinelRule` gained `Query` and `QueryTables`. The command reported how a rule was
+  tuned but not what it read, so answering "which rules depend on this table" meant reaching
+  into `Raw.properties.query` by hand - which is how a rule pointed at an empty table stays
+  invisible: it is enabled, it is green, and it can never fire.
+
+  `Query` IS NULL ON A FUSION OR NRT RULE, not an empty string. Those rules have no query of
+  their own - the correlation is Microsoft's - and an empty string would claim a query exists
+  and happens to be blank. Measured on a live workspace: 20 of 21 enabled rules carry one.
+
+  `QueryTables` IS A SCAN, NOT A KQL PARSER, AND EMPTY MEANS "NONE FOUND". It strips comments
+  and string literals, excludes `let`-bound names, and follows union legs, join operands and
+  user-defined function bodies; it resolved 19 of 20 queried rules on the same workspace. The
+  twentieth builds its table name at run time via `table(tableName)`, which nothing in the text
+  can reveal. Two shapes cost a rewrite and are now regression-tested: the last column of a
+  `summarize ... by x, Uri` is followed by a pipe exactly as a table reference is, and matching
+  an identifier after a bare `union` let the regex backtrack into `isfuzzy=true` and report `e`
+  as the only table of three WAF rules - while the two tables they really read went missing.
+
+- `Get-MsecDefenderAlert` and `Get-MsecDefenderIncident` gained `-AnyAge`;
+  `Search-MsecLogAnalytics` gained `-Query`; `-IncludeAlerts` now attaches the alerts
+  themselves. Three gaps found by using the module for a real investigation and having to
+  reach past it three times.
+
+  `-AnyAge` SENDS NO DATE FILTER, which `-Days 365` is not equivalent to. Both existing date
+  parameters cap at 365, so an item older than that is INVISIBLE rather than merely old - and
+  the question being asked was "is there a years-old backlog", where an empty answer and a
+  truncated one look identical. Measured on a live tenant: the open set came back as 59 alerts
+  and 29 incidents with nothing older than three weeks, which is only trustworthy because the
+  query had no window at all. The result is still bounded by Graph's own retention on these
+  endpoints; `-AnyAge` means "as far back as the service will answer", not "all time".
+
+  `-Query` TAKES RAW KQL, mirroring the parameter of the same name on
+  `Search-MsecDefenderHunting`. A bundled `.kql` remains the better home for anything asked
+  twice - reviewable, diffable, tab-completable - but without this the only way to ask a
+  one-off question of Log Analytics was `Invoke-AzOperationalInsightsQuery` directly, which is
+  how an entire analysis ends up outside the module that is supposed to hold it. The
+  two-years-of-Sentinel-history finding came from exactly that detour. Exactly one of
+  `-Subject` and `-Query` is required, checked at run time rather than through parameter sets,
+  which already split on the time window.
+
+  `-IncludeAlerts` RETURNS THE ALERTS, NOT JUST A COUNT OF THEM. It previously set
+  `AlertCount` and `AlertSources`, so every caller wanting to see what an incident was
+  actually about re-fetched `/security/alerts_v2` and joined on `IncidentId` by hand - slower,
+  and a join each of them had to get right separately. `Alerts` now carries id, title,
+  severity, status, classification, determination and the same flattened evidence strings the
+  alert command produces. It is an empty array without `-IncludeAlerts`, never null.
+
+- `Get-MsecDefenderAlert` gained `-UpdatedWithin`, `-Classification`, `-Determination`,
+  `-TriagedBy` and an `Evidence` property. Together these make the triage history queryable,
+  which it was not.
+
+  `-Days` FILTERS ON WHEN AN ALERT WAS RAISED, NOT WHEN IT WAS WORKED, and the distinction is
+  not cosmetic. An alert raised a year ago and triaged last week is absent from `-Days 30` and
+  from every value short of 365, so "what have we triaged recently" answered with `-Days`
+  returns a confident, wrong answer. Measured on a live tenant: `-Days 45` returned 470
+  alerts and read as a tenant doing almost no triage, while `-UpdatedWithin 45` returned 431
+  alerts classified by one named analyst - 354 falsePositive, 39 truePositive, 36
+  informationalExpectedActivity. The work was there; the query could not see it.
+  `-UpdatedWithin` REPLACES the created-date filter rather than narrowing it, because ANDing
+  the two would drop every old alert worked recently - the exact set it exists to find.
+
+  `-TriagedBy` matches `assignedTo`, WHICH IS NOT ALWAYS A PERSON. On the same tenant
+  `Suppression rule` held 186 alerts and `MdcAlertsResourceProvider` 73. Both look like
+  verdicts and neither is one, so anything learning from this data has to exclude them
+  explicitly - the parameter exists so that is possible rather than accidental.
+
+  `Evidence` flattens the polymorphic evidence collection to one readable identifier per item
+  - `device: VIE0001 (suspicious)`, `user: alex@contoso.com`, `ip: 203.0.113.9` - because
+  device, user, ip, file, mailbox, url and process evidence each carry different fields and no
+  single property can be read off them. `EvidenceCount` already existed and said only how
+  many; the objects remain on `Raw`.
+
+  Alerts still have NO writable comment: `comments` is read-only on `alerts_v2` in v1.0 and
+  beta alike. The resolution narrative belongs on the incident's `resolvingComment`, which
+  `Set-MsecDefenderIncident` writes.
+
 - `New-MsecApp` creates the Key Vault when it does not exist, and the Bicep template that
   used to do it has been removed. Pass `-ResourceGroupName` and `-Location` and the whole
   bootstrap - vault, app registration, service principal, certificate, consent - is one
@@ -51,8 +158,6 @@ All notable changes to this project will be documented in this file.
   it. The probe is now the same one `Mock` performs, so a command that cannot be mocked is
   stubbed whether it resolves or not.
 
-
-### Fixed
 - `Get-MsecPurviewRetention` reported an empty retention-policy list as though it had measured
   zero. It had not.
 
@@ -81,8 +186,6 @@ All notable changes to this project will be documented in this file.
   mail on a schedule - measured on the same tenant: three custom MRM policies and a Default MRM
   Policy deleting Junk Email and Deleted Items at 30 days across 302 mailboxes.
 
-
-### Fixed
 - The `Connect-MsecAdmin`, `Set-MsecDefenderAlert` and `Set-MsecDefenderIncident` tests failed on
   the macOS CI runner and passed on Windows and Ubuntu.
 
@@ -106,6 +209,172 @@ All notable changes to this project will be documented in this file.
   called. Every stub now declares `[CmdletBinding()]` and the parameters the tests filter on.
 
 ### Added
+- Two bundled Log Analytics queries, both written after an investigation needed them and the
+  module had nothing to answer with.
+
+  `Search-MsecLogAnalytics -Subject AppGateway -Name TopClients` - one row per client IP with
+  request volume, not-found ratio, max distinct paths, hosts reached and user agents. THE VIEW
+  THAT FINDS A SCANNER WITHOUT KNOWING THERE IS ONE. An unauthorised Nessus scan ran six days
+  against production in two regions; the detections fired 23 times and every alert showed a
+  single sample path, usually `/`, so they read as noise. Grouping the same traffic BY CLIENT
+  identified it immediately: 167,787 requests, 4,217 distinct paths across 23 hosts, and a
+  UserAgents column containing `Nessus` and four Log4Shell probe payloads. Out of 38,976
+  clients in the window, one filter on distinct paths surfaced every scanner present.
+
+  `NotFoundRatio` is the tell: a browser or an integration asks for things that exist, content
+  discovery is mostly 404s by construction. The reverse does not hold - a low ratio does not
+  clear a client, it means it was not enumerating. `MaxDistinctPaths` is a max rather than a
+  sum because it is a per-bin dcount, and summing bins would double-count a path tried twice.
+
+  `Search-MsecLogAnalytics -Subject Sentinel -Name IncidentBacklog` - incidents at their LATEST
+  state, bucketed by age. SECURITYINCIDENT IS A CHANGE LOG, NOT AN INCIDENT LIST: every status
+  change writes a row, so a plain count answers "how many times did incidents change". Measured
+  on one workspace: 2,488 rows, 2,394 distinct incidents, 2,359 closed and 35 open - counting
+  rows would have reported the backlog as 70x its real size. It also reaches where Graph does
+  not: `/security/incidents` returned nothing older than three weeks on the same tenant while
+  this table held 21 months, so "is there an old backlog" answered from Graph alone comes back
+  empty and sounds definitive.
+
+- `Measure-MsecDefenderTriageAgreement` - scores proposed triage verdicts against the ones
+  analysts actually recorded. Answers the question that has to come before any automated
+  classification: how often would it have agreed with the people doing this now, and what
+  would it have missed.
+
+  IT MAKES NO JUDGEMENTS AND CALLS NOTHING. The proposed verdicts come from wherever the
+  caller likes - a model, a rule, a second analyst - and are passed in as a hashtable. msec
+  reads and measures; deciding what an alert is belongs outside it, and wiring a particular
+  engine in would make the measurement itself untestable.
+
+  A SINGLE ACCURACY FIGURE IS MISLEADING ON THIS DATA, SO NONE IS REPORTED. Triage sets are
+  heavily imbalanced - measured on a live tenant, 354 falsePositive against 39 truePositive -
+  so answering 'falsePositive' every time scores 89% while catching nothing at all. That case
+  is a test rather than a hypothetical. `TruePositiveRecall` is the number that decides
+  whether automation is safe, and it is null rather than 1 when the set holds no true
+  positives, because no evidence is not a pass.
+
+  GROUND TRUTH IS ONLY WHERE SOMEONE RECORDED ONE. Alerts whose classification is `unknown`
+  or empty are reported as `Unlabelled` rather than scored as disagreements - nobody judged
+  them, so there is nothing to disagree with. Coverage is reported for the same reason:
+  `LabelledNoVerdict` and `OrphanVerdicts` exist so that a proposal which declined to answer
+  most of the set cannot look accurate on the handful it did.
+
+- `Get-MsecIntuneDeviceCompliance` - why each device is non-compliant: the policy and the
+  individual setting that failed. `Get-MsecIntuneDevice` reports THAT a device is
+  non-compliant; the reason lives two levels below it, on
+  `/managedDevices/{id}/deviceCompliancePolicyStates` and a further call per policy for
+  `settingStates`, and nothing surfaced it.
+
+  MOST NON-COMPLIANCE IS NOT A SECURITY FAILURE. Intune ships a built-in `Default Device
+  Compliance Policy` whose rules are housekeeping - has the device checked in
+  (`RequireRemainContact`), does the owning account still exist (`RequireUserExistence`), is
+  any policy assigned at all. A device failing those is stale, not insecure. Measured on a
+  live tenant: 33 non-compliant devices, 30 attributable failures, and EVERY one from the
+  default policy - not one device failed encryption, OS version or any configured baseline,
+  while none had checked in for over a month. `Category` marks each row `Housekeeping` or
+  `SecurityControl`, because 33 undifferentiated rows are exactly enough noise to hide the
+  34th when a real failure appears.
+
+  A DEVICE WHOSE REASON CANNOT BE READ IS REPORTED, NOT DROPPED. A device can be flagged
+  non-compliant while its `settingStates` return nothing - measured, 4 of 33 - and omitting
+  those rows quietly shrinks the problem. They come back as `Unattributed` with a null
+  `Setting`, and they deliberately SURVIVE `-SecurityOnly`: an unreadable reason might be a
+  security failure, and the view someone uses to hunt for those is the worst possible place
+  for it to vanish from.
+
+  READ `settingName`, NOT `setting`. The `setting` property is present and EMPTY on every row
+  v1.0 returns; the human-readable rule is in `settingName`. Reading the obvious one yields a
+  column of blanks that looks like missing data rather than a mistake.
+
+  Two Graph calls per device, so it defaults to non-compliant devices only - a tenant should
+  not pay for the compliant ones to answer a question about the broken ones. `DaysQuiet` is on
+  every row because a device that has not checked in cannot be remediated by Intune at all:
+  policy applies only when the device talks to the service, so a stale row is a retirement
+  decision rather than a fix.
+
+- `Get-MsecEntraNamedLocation` - named locations, whether each is flagged trusted, and which
+  Conditional Access policies actually reference it. Marking a location trusted lets a policy
+  exclude it and lowers the risk Identity Protection assigns to sign-ins from it: both are
+  privileges granted to a network rather than to a person.
+
+  A LOCATION NO POLICY REFERENCES DOES NOTHING AT ALL, however it is flagged. `IsReferenced`
+  and `UsedByPolicy` make that visible, so a trusted-but-unused location reads as inert rather
+  than alarming. Measured on a live tenant: seven locations, six trusted, and exactly ONE
+  policy referenced any of them.
+
+  AN EXCLUSION IN ONE POLICY IS NOT AN EXEMPTION, because Conditional Access grants are
+  ADDITIVE - every applicable policy must be satisfied. On the same tenant a Microsoft-managed
+  MFA policy excluded `AllTrusted` and looked exactly like an office-IP MFA bypass for four
+  admin accounts, until a second enabled policy was found covering all four through a group
+  with no location condition at all. `ReferencedAs` carries the direction and the policy state
+  so a row cannot be read as an exemption on its own.
+
+  `AllTrusted` IS A TOKEN, NOT AN ID. A policy excluding it names no location while applying to
+  every location flagged trusted, so matching on id alone finds nothing and reports every
+  trusted location as unreferenced. `AllTrusted` and `All` are expanded against the location
+  list and recorded as such.
+
+  A country location has no `isTrusted` property - it cannot be trusted - so `IsTrusted` is
+  false there as a fact rather than as a default standing in for a missing field.
+
+- `Get-MsecEntraCrossTenantAccess` - which external tenants may collaborate, and whose MFA and
+  device claims this tenant accepts in place of its own. One row per scope, the tenant default
+  included.
+
+  AN INHERITED SETTING IS NOT A SETTING OF FALSE. Graph returns `inboundTrust` as NULL on a
+  partner with no override - it follows the tenant default - and null renders as blank or
+  False in almost any table. If the default later turns MFA trust ON, every inheriting partner
+  silently follows while a report built from the raw field still shows them as trusting
+  nothing. `TrustsMfa` is the EFFECTIVE value, resolved against the default, and `IsInherited`
+  says whether the partner set it or merely follows. Resolving the other way would be just as
+  wrong: an explicit `false` on a partner is a deliberate opt-out and survives a default of
+  true.
+
+  THE DEFAULT IS RETURNED AS A ROW, not as context for the others. Measured on a live tenant:
+  four partners were configured, all of them IT suppliers, while the guests that actually
+  mattered - 25 from one CRO, 24 from another, across some 60 domains - had no entry at all
+  and were governed entirely by the default. Reading only the partner list describes the
+  organisations someone once thought about, not the ones with access.
+
+  A missing `accessType` reports as `allowed` rather than blank: an entry that was never
+  narrowed has no such property, and blank would read as unknown for the ordinary B2B default.
+
+  Trusting MFA cannot admit an un-authenticated user, which the help says because the setting
+  is routinely read as a weakening. It accepts a claim the home tenant actually issued; where
+  no MFA was performed there is no claim, and a Conditional Access policy requiring MFA still
+  blocks.
+
+- `Get-MsecEntraGuest` - guest accounts, whether each invitation was ever redeemed, and when
+  the account was last actually used. A guest is a real directory account: it holds group
+  membership, site and team access, and app consents, and it is governed by whatever
+  Conditional Access covers guests, which in many tenants is less than covers members.
+
+  AN INVITATION IS NOT AN ACCOUNT SOMEONE USES. `InvitationState` `PendingAcceptance` means
+  the invitation was never redeemed - nobody has ever signed in as it - while the account
+  already exists and can already hold the access granted in anticipation. Measured on a live
+  tenant: 107 of 222 guests, 48%, had never redeemed.
+
+  'NEVER SIGNED IN' IS NOT `lastSignInDateTime`, WHICH IS INTERACTIVE ONLY. An account signing
+  in daily through refresh tokens or a service integration leaves that field EMPTY while
+  `lastNonInteractiveSignInDateTime` moves every day, so reading it alone reports a live
+  account as dormant. Measured on the same tenant, 111 guests looked dormant that way and 109
+  genuinely were - two accounts in active use would have been put on a deletion list.
+  `LastSignInUtc` is the LATEST of the interactive, non-interactive and last-successful
+  timestamps, and `LastSignInKind` says which one it came from.
+
+  A TENANT WHERE NO GUEST HAS SIGN-IN DATA IS A PERMISSION PROBLEM, NOT AN IDLE TENANT. Graph
+  omits `signInActivity` entirely - silently, no error, no property - when the caller lacks
+  `AuditLog.Read.All`, and every guest then looks never-used. That is the most dangerous shape
+  this command could take, because the output reads as a list of accounts safe to delete, so
+  a tenant with no sign-in data at all warns and sets `SignInDataAvailable` false on every row.
+
+  `-NeverSignedIn` and `-InactiveDays` are deliberately separate and do not overlap: a guest
+  that never signed in is not returned by `-InactiveDays`, because "never arrived" and
+  "arrived once and left" are different findings and a row that could be either says nothing.
+
+  `Domain` comes from the mail address, not the UPN: a guest UPN is mangled to
+  `alex_contoso.com#EXT#@tenant.onmicrosoft.com`, so splitting it on `@` yields the HOST
+  tenant and groups every guest in the directory under one domain.
+
 - `Get-MsecEntraAuthenticationMethod` - which authentication methods the tenant permits, who
   each is actually available to, and which of them are phishing-resistant. Every MFA
   requirement in the tenant - Conditional Access, PIM activation, a step-up on a privileged
@@ -878,29 +1147,6 @@ All notable changes to this project will be documented in this file.
   a custom policy with no rule is inert however carefully it was written. Every row carries
   `IsApplied` and `AppliedBy`, making `Where-Object { -not $_.IsApplied }` the first
   thing to run against the result.
-
-### Fixed
-- The `Connect-MsecAdmin`, `Set-MsecDefenderAlert` and `Set-MsecDefenderIncident` tests failed on
-  the macOS CI runner and passed on Windows and Ubuntu.
-
-  They mock `Get-MgContext`, `Connect-MgGraph` and `Disconnect-MgGraph`, and Pester's `Mock`
-  requires the command to EXIST - a missing one fails as "Could not find Command Get-MgContext"
-  rather than as anything pointing at the real cause. `Microsoft.Graph.Authentication` is
-  preinstalled on the Windows and Ubuntu GitHub images but not the macOS one, so the same suite
-  passed on two runners and failed on the third.
-
-  Installing it in CI was the wrong fix: unlike Az, it is deliberately NOT a dependency of msec -
-  only `Connect-MsecAdmin` needs it, and it checks at run time. The tests now stub those three
-  commands, and ONLY when they are genuinely absent, so a machine with the real module still
-  mocks the real command and the two behave identically. Same pattern the Purview tests already
-  use for the optional ExchangeOnlineManagement cmdlets.
-
-  THE STUBS CARRY THE REAL PARAMETER NAMES, which the first attempt at this did not. A stub of
-  `param()` with no `[CmdletBinding()]` is a SIMPLE function: it accepts any argument into
-  `$args` rather than rejecting it, so `Connect-MgGraph -TenantId x` did not fail - `$TenantId`
-  simply never bound. A `-ParameterFilter { $TenantId -eq 'tenant-1' }` then matched nothing and
-  the assertion failed as "expected 1 call, got 0", which reads as the command never having been
-  called. Every stub now declares `[CmdletBinding()]` and the parameters the tests filter on.
 
 ### Added
 - `Get-MsecEntraAppConsent` - which applications have been granted access to tenant data, what
@@ -1916,7 +2162,7 @@ All notable changes to this project will be documented in this file.
   Project names are URL-encoded now: 17 of 36 contained spaces, so `-Project 'Contoso eTMF'` had
   been building a malformed URL.
 
-- **Fixed on Linux:** the module folder and its manifest are lowercase - `msec/msec.psd1`,
+- **Fixed on Linux:** the module folder and its manifest are lowercase - `Msec/Msec.psd1`,
   `msec.psm1`, `msec.format.ps1xml` - matching the PowerShell Gallery id.
 
   The id was set by the first publish and a Gallery id keeps the casing it was first published
@@ -2294,7 +2540,7 @@ All notable changes to this project will be documented in this file.
   non-zero exit as "issue found, run the remediation", so a machine that could not be read would
   otherwise have its administrators edited on the strength of a failed check.
 
-  `msec/tests/IntuneRemediationScripts.Tests.ps1` guards what is testable off-Windows: both
+  `Msec/tests/IntuneRemediationScripts.Tests.ps1` guards what is testable off-Windows: both
   halves present and parsing, the group resolved by SID, the safety rails still there, and -
   the hazard the scripts warn about - `$TargetAccount` identical across the pair, since they are
   separate uploads and nothing in Intune enforces that they agree.

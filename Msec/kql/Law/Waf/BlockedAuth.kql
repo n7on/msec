@@ -1,0 +1,27 @@
+// Requests the WAF BLOCKED on an authentication path, with the time, the client, the host and
+// the rule that did it. The query that answers "are we blocking real customers?".
+//
+// Loaded by Search-MsecLogAnalytics -Subject Waf -Name BlockedAuth -WorkspaceName <ws>.
+//
+// WHY THIS EXISTS. A blocked login is the most expensive WAF false positive there is: the
+// customer cannot get in, they do not report it as a security problem, and it is invisible in
+// any view that groups by rule or by volume - six blocked logins hide inside a day of ordinary
+// scanner noise. Grouping by PATH instead surfaces them immediately.
+//
+// EXPECT THE BLOCKING RULE TO BE 949110, NOT THE RULE THAT CAUSED IT. CRS 3.x is anomaly
+// scoring: 949110 "Inbound Anomaly Score Exceeded" is what logs Action="Blocked", while the
+// rules that drove the score logged only Action="Matched". So this tells you THAT a login was
+// blocked; to find out WHY, join on TransactionId and read every Matched row for it. The
+// contributing rules are often not the one anybody excluded.
+//
+// A BLOCK HERE AFTER AN EXCLUSION WAS DEPLOYED MEANS THE EXCLUSION DID NOT WORK, or did not
+// cover everything feeding the score. Compare the timestamp against the release time rather
+// than against the date - a same-day block before the deployment proves nothing either way.
+// No time filter - the window is -Days / -Timespan, applied server-side. See ExclusionCheck.
+AGWFirewallLogs
+| where Action == "Blocked"
+| where RequestUri has_any ("login", "signin", "sign-in", "authorize", "OnSuccessLogin",
+                            "account", "token", "oauth", "saml")
+| project TimeGenerated, Hostname, ClientIp, RuleId, RequestUri, TransactionId, Message
+| order by TimeGenerated desc
+| take 200

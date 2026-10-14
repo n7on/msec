@@ -1,6 +1,6 @@
 ---
-external help file: msec-help.xml
-Module Name: msec
+external help file: Msec-help.xml
+Module Name: Msec
 online version:
 schema: 2.0.0
 ---
@@ -14,8 +14,10 @@ identity, cloud apps and DLP - with the incident it belongs to.
 ## SYNTAX
 
 ```
-Get-MsecDefenderAlert [[-Days] <Int32>] [[-Severity] <String[]>] [[-Status] <String[]>]
- [[-ServiceSource] <String[]>] [<CommonParameters>]
+Get-MsecDefenderAlert [[-Days] <Int32>] [[-UpdatedWithin] <Int32>] [-AnyAge] [[-Severity] <String[]>]
+ [[-Status] <String[]>] [[-ServiceSource] <String[]>] [[-Classification] <String[]>]
+ [[-Determination] <String[]>] [[-TriagedBy] <String[]>]
+ [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -94,6 +96,49 @@ Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
+### -UpdatedWithin
+Alerts last TOUCHED within this many days, whatever their age.
+Use this for triage
+history: -Days finds alerts RAISED in a window, so an alert raised a year ago and
+worked last week is absent from it at every value short of 365.
+Replaces the
+created-date filter rather than narrowing it.
+
+```yaml
+Type: Int32
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 2
+Default value: 0
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -AnyAge
+NO DATE FILTER AT ALL, for the question "what is open, however old".
+-Days and
+-UpdatedWithin both cap at 365, so neither can answer it, and reaching for a large
+-Days is not the same thing: an item older than the cap is invisible rather than
+merely old.
+That gap is how a backlog gets reported as empty.
+
+The result is still bounded - by Graph's own retention on these endpoints, not by
+anything chosen here - so "any age" means "as far back as the service will answer".
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
 ### -Severity
 Only these severities: informational, low, medium, high.
 
@@ -103,7 +148,7 @@ Parameter Sets: (All)
 Aliases:
 
 Required: False
-Position: 2
+Position: 3
 Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
@@ -118,7 +163,7 @@ Parameter Sets: (All)
 Aliases:
 
 Required: False
-Position: 3
+Position: 4
 Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
@@ -135,7 +180,61 @@ Parameter Sets: (All)
 Aliases:
 
 Required: False
-Position: 4
+Position: 5
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Classification
+The recorded triage verdict.
+'unknown' is what an untouched alert carries, so
+-Classification unknown selects the UNtriaged set.
+
+```yaml
+Type: String[]
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 6
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Determination
+The recorded cause behind the classification, e.g.
+notMalicious, securityTesting,
+malware.
+'unknown' means nobody recorded one.
+
+```yaml
+Type: String[]
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 7
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -TriagedBy
+Matches assignedTo.
+NOT always a person - 'Suppression rule' and
+'MdcAlertsResourceProvider' appear here too, and neither is a human verdict.
+Name the
+analysts explicitly when the output is going to be learned from.
+
+```yaml
+Type: String[]
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 8
 Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False

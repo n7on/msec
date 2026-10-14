@@ -8,10 +8,25 @@
 
 A PowerShell module for reading Microsoft security posture - Secure Score, Defender XDR, Entra ID, Intune, Azure - as flat objects you can filter, group and export. The app registration holds read permissions only, so the certificate in Key Vault cannot change your tenant; the few commands that write run as YOU, through a separate `Connect-MsecAdmin` sign-in. Authentication is certificate-based against that app registration, and the private key never leaves Azure Key Vault. Requires PowerShell 7 on Windows, Linux, or macOS.
 
+## Working on msec with Claude Code
+
+This repo carries its own instructions, so any Claude Code session opened here behaves the
+same way:
+
+- `CLAUDE.md` - what the agent owns, the two identities (read as the app, write as the
+  signed-in user), the conventions that make the output trustworthy, and the rule that
+  **nothing identifying a tenant goes in this repo** because it is public
+- `.claude/skills/msec-command` - add or change a command
+- `.claude/skills/msec-release` - ship a version to the PowerShell Gallery
+- `.claude/settings.json` - enforced limits: outward-facing actions ask first, and systems
+  owned by other repos are denied
+
+Personal overrides go in `.claude/settings.local.json`, which is gitignored.
+
 ## Install
 
 ```powershell
-Install-Module msec
+Install-Module Msec
 
 # One-time setup: creates the app registration, its certificate in Key Vault, and
 # consents the read permissions. Safe to re-run - it updates rather than duplicates.
@@ -287,6 +302,7 @@ answer, and an empty result with one as unread.
 - [Get-MsecDefenderTeamsMessage](./docs/commands/Get-MsecDefenderTeamsMessage.md) - Teams messages with recipients and URL domains resolved - no sender IP exists, so the trust boundary is SenderType and IsExternalThread
 - [Get-MsecDefenderIncident](./docs/commands/Get-MsecDefenderIncident.md) - Defender XDR incidents, one row each, with triage state and time to resolve
 - [Get-MsecDefenderAlert](./docs/commands/Get-MsecDefenderAlert.md) - Defender XDR alerts across endpoint, Office 365, identity and DLP, with the incident each belongs to
+- [Measure-MsecDefenderTriageAgreement](./docs/commands/Measure-MsecDefenderTriageAgreement.md) - Scores proposed triage verdicts against the ones analysts actually recorded, per class - because a single accuracy figure on an imbalanced set hides the only error that matters
 - [Get-MsecDefenderDevice](./docs/commands/Get-MsecDefenderDevice.md) - Device inventory with per-device vulnerability counts
 - [Set-MsecDefenderAlert](./docs/commands/Set-MsecDefenderAlert.md) - **Writes.** Resolve, classify or assign alerts; needs `Connect-MsecAdmin`
 - [Set-MsecDefenderIncident](./docs/commands/Set-MsecDefenderIncident.md) - **Writes.** Resolve, classify or comment on incidents - the resolution comment lives here, not on the alert; needs `Connect-MsecAdmin`
@@ -331,6 +347,9 @@ Compliance Administrator), which is what a 403 there usually means.
 - [Get-MsecEntraPimActivation](./docs/commands/Get-MsecEntraPimActivation.md) - Who activated which privileged role, for how long, with what justification, and whether MFA was used
 - [Get-MsecEntraPimAlert](./docs/commands/Get-MsecEntraPimAlert.md) - PIM's own findings about privileged access - roles assigned outside PIM, too many global admins - which reach neither Defender XDR nor Sentinel
 - [Get-MsecEntraAuthenticationMethod](./docs/commands/Get-MsecEntraAuthenticationMethod.md) - Which authentication methods the tenant permits, who each is actually available to, and which of them are phishing-resistant - what requiring MFA really means here
+- [Get-MsecEntraGuest](./docs/commands/Get-MsecEntraGuest.md) - Guest accounts, whether each invitation was ever redeemed, and when the account was last actually used - counting non-interactive sign-ins, not just interactive ones
+- [Get-MsecEntraCrossTenantAccess](./docs/commands/Get-MsecEntraCrossTenantAccess.md) - Which external tenants may collaborate and whose MFA and device claims this tenant accepts, with inherited settings resolved against the default rather than shown as false
+- [Get-MsecEntraNamedLocation](./docs/commands/Get-MsecEntraNamedLocation.md) - Named locations, whether each is trusted, and which Conditional Access policies actually reference it - because a location no policy names does nothing, however it is flagged
 - [Get-MsecEntraConditionalAccessPolicy](./docs/commands/Get-MsecEntraConditionalAccessPolicy.md) - Conditional Access policies with conditions and grant controls flattened to columns
 - [Get-MsecEntraConditionalAccessChange](./docs/commands/Get-MsecEntraConditionalAccessChange.md) - Who changed which Conditional Access policy, when, and the before/after of each setting that moved - diffed out of the whole-policy JSON Entra records
 - [Get-MsecEntraConditionalAccessStats](./docs/commands/Get-MsecEntraConditionalAccessStats.md) - Aggregated Conditional Access outcomes over a period
@@ -348,6 +367,7 @@ Compliance Administrator), which is what a 403 there usually means.
 - [Get-MsecIntuneConfigurationProfile](./docs/commands/Get-MsecIntuneConfigurationProfile.md) - Settings Catalog and classic configuration profiles merged, with assignment targets resolved
 - [Get-MsecIntuneCompliancePolicy](./docs/commands/Get-MsecIntuneCompliancePolicy.md) - Compliance policies: what makes a device compliant, and therefore allowed through Conditional Access
 - [Get-MsecIntuneDevice](./docs/commands/Get-MsecIntuneDevice.md) - Every managed device known to Intune
+- [Get-MsecIntuneDeviceCompliance](./docs/commands/Get-MsecIntuneDeviceCompliance.md) - Why each device is non-compliant: the policy and the individual setting that failed, separating a broken security control from a device that merely went quiet
 - [Get-MsecIntuneScriptResult](./docs/commands/Get-MsecIntuneScriptResult.md) - Per-device results from every kind of Intune script: remediations, platform scripts, macOS custom attributes and custom compliance scripts
 - [Get-MsecIntuneAuditEvent](./docs/commands/Get-MsecIntuneAuditEvent.md) - Who changed which Intune policy, when, and the before/after value of every setting that moved. Retains far longer than the Entra audit log
 - [Get-MsecIntuneAsrRule](./docs/commands/Get-MsecIntuneAsrRule.md) - Every Attack Surface Reduction rule, the mode it is set to, which policy sets it and who that reaches - including the rules no policy configures at all
@@ -362,6 +382,8 @@ Compliance Administrator), which is what a 403 there usually means.
 
 ### Azure
 - [Get-MsecAppGatewayClientActivity](./docs/commands/Get-MsecAppGatewayClientActivity.md) - Everything a client IP did through an Application Gateway, with whether it ever completed an authentication - reaching a login page is not logging in
+- [Get-MsecMySqlConfiguration](./docs/commands/Get-MsecMySqlConfiguration.md) - MySQL flexible server parameters, with whether a person set each one or the platform did. Resource Graph cannot see these at all. Runs as the signed-in user
+  - -UserOverride is the deviation report, and it is not the same as Value -ne DefaultValue - a parameter set deliberately to its own default is still an override
 - [Search-MsecAzureResourceGraph](./docs/commands/Search-MsecAzureResourceGraph.md) - Run a bundled KQL query against Azure Resource Graph
   - -ResourceType ApplicationInsights answers where every component's telemetry actually lands, and which workspaces were auto-created rather than chosen
 - [Search-MsecLogAnalytics](./docs/commands/Search-MsecLogAnalytics.md) - Run a bundled KQL query against a Log Analytics workspace

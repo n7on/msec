@@ -1,6 +1,6 @@
 ---
-external help file: msec-help.xml
-Module Name: msec
+external help file: Msec-help.xml
+Module Name: Msec
 online version:
 schema: 2.0.0
 ---
@@ -14,16 +14,14 @@ Runs a bundled KQL query against a Log Analytics workspace and returns the rows.
 
 ### Days (Default)
 ```
-Search-MsecLogAnalytics -Subject <String> [-Name <String>] -WorkspaceName <String>
- [-ResourceGroupName <String>] [-Days <Int32>] [-MaxRows <Int32>]
- [<CommonParameters>]
+Search-MsecLogAnalytics [-Subject <String>] [-Name <String>] -WorkspaceName <String>
+ [-ResourceGroupName <String>] [-Days <Int32>] [-Query <String>] [-MaxRows <Int32>] [<CommonParameters>]
 ```
 
 ### Timespan
 ```
-Search-MsecLogAnalytics -Subject <String> [-Name <String>] -WorkspaceName <String>
- [-ResourceGroupName <String>] -Timespan <TimeSpan> [-MaxRows <Int32>]
- [<CommonParameters>]
+Search-MsecLogAnalytics [-Subject <String>] [-Name <String>] -WorkspaceName <String>
+ [-ResourceGroupName <String>] -Timespan <TimeSpan> [-Query <String>] [-MaxRows <Int32>] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -34,7 +32,7 @@ four NB sections below before writing a .kql for this.
 
 The query is loaded by convention from:
 
-    msec/kql/Law/\<Subject\>/\<Name\>.kql
+    Msec/kql/Law/\<Subject\>/\<Name\>.kql
 
 For example, Search-MsecLogAnalytics -Subject Waf loads Kql/Law/Waf/All.kql.
 Each
@@ -104,7 +102,7 @@ Type: String
 Parameter Sets: (All)
 Aliases:
 
-Required: True
+Required: False
 Position: Named
 Default value: None
 Accept pipeline input: False
@@ -203,6 +201,29 @@ Parameter Sets: Timespan
 Aliases:
 
 Required: True
+Position: Named
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Query
+RAW KQL, for the questions no bundled file answers.
+Mirrors -Query on
+Search-MsecDefenderHunting, which is the precedent in this module.
+
+A bundled .kql is the better home for anything asked twice: it is reviewable,
+diffable and tab-completable.
+This exists because the alternative was reaching past
+the module to Invoke-AzOperationalInsightsQuery, which is how a whole analysis ends
+up outside the thing that is supposed to hold it.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
 Position: Named
 Default value: None
 Accept pipeline input: False

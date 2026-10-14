@@ -1,6 +1,6 @@
 ---
-external help file: msec-help.xml
-Module Name: msec
+external help file: Msec-help.xml
+Module Name: Msec
 online version:
 schema: 2.0.0
 ---
@@ -15,7 +15,7 @@ triaged it, and how long it took to resolve.
 
 ```
 Get-MsecDefenderIncident [[-Days] <Int32>] [[-Severity] <String[]>] [[-Status] <String[]>] [-ExcludeRedirected]
- [-IncludeAlerts] [<CommonParameters>]
+ [-AnyAge] [-IncludeAlerts] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -112,6 +112,25 @@ Accept wildcard characters: False
 ### -ExcludeRedirected
 Drop incidents merged into another one.
 Use when counting; omit when explaining.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -AnyAge
+NO DATE FILTER AT ALL, for "what is open, however old".
+-Days caps at 365, so an
+incident older than that is invisible rather than merely old - which is how a
+backlog gets reported as empty.
+Bounded by Graph's own retention, nothing here.
 
 ```yaml
 Type: SwitchParameter
