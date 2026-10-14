@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__claude_ai_Atlassian_Rovo__createConfluencePage",
+      "mcp__claude_ai_Atlassian_Rovo__updateConfluencePage",
+      "mcp__claude_ai_Microsoft_365__sharepoint_update_file",
+      "mcp__claude_ai_Microsoft_365__sharepoint_upload_file",
+      "mcp__claude_ai_Microsoft_365__sharepoint_delete_item",
+      "mcp__claude_ai_Microsoft_365__sharepoint_move_item",
+      "mcp__claude_ai_Microsoft_365__sharepoint_rename_item",
+      "mcp__claude_ai_ADO_Azure_Remote_MCP__wit_work_item_write",
+      "mcp__claude_ai_ADO_Azure_Remote_MCP__wit_work_item_comment_write",
+      "mcp__claude_ai_ADO_Azure_Remote_MCP__repo_pull_request_write",
+      "mcp__claude_ai_ADO_Azure_Remote_MCP__wiki_upsert_page"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(gh release:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(gh pr:*)"
+    ]
+  }
+}

@@ -3,3 +3,6 @@
 
 # Pester CI output.
 testResults.xml
+
+# Personal permissions - not shared.
+.claude/settings.local.json
