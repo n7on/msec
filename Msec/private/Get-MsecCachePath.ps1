@@ -70,7 +70,7 @@ function Get-MsecCachePath {
         [string] $TenantId
     )
 
-    # Tenant-scoped, one subfolder per tenant. Flipping context with Select-MsecAzureContext is
+    # Tenant-scoped, one subfolder per tenant. Flipping context with Set-MsecContext is
     # routine, and a single shared file would mean each flip discards the other tenant's cache
     # and overwrites it - so ping-ponging between two tenants leaves the cache permanently cold
     # and completion dead after every switch. Separate folders let both stay warm, and make
@@ -83,15 +83,7 @@ function Get-MsecCachePath {
         throw 'No Azure context, so there is no tenant to scope the cache to.'
     }
 
-    $dir = $env:MSEC_CACHE_DIR
-    if (-not $dir) {
-        $base = [Environment]::GetFolderPath('LocalApplicationData')
-        if (-not $base) {
-            # GetFolderPath returns empty rather than throwing on minimal Linux containers where
-            # neither XDG_DATA_HOME nor HOME is set the way .NET expects.
-            $base = Join-Path ($HOME ?? [System.IO.Path]::GetTempPath()) '.local/share'
-        }
-        $dir = Join-Path $base 'msec'
-    }
+    # Shared with the context store so the two cannot disagree about where state lives.
+    $dir = Get-MsecCacheRoot
     Join-Path (Join-Path $dir $tenantId) "$Name.json"
 }
