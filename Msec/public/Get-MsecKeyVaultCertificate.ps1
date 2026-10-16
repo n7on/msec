@@ -94,7 +94,7 @@ function Get-MsecKeyVaultCertificate {
     Import-Module Az.KeyVault -ErrorAction Stop
 
     if (-not (Get-AzContext -ErrorAction SilentlyContinue)) {
-        throw 'No Azure context. Run Connect-AzAccount, then Select-MsecAzureContext to pick the subscription to report on.'
+        throw 'No Azure context. Run Connect-AzAccount, then Set-MsecContext to pick the subscription to report on.'
     }
 
     $hasWindow = $PSBoundParameters.ContainsKey('ExpiringWithinDays')

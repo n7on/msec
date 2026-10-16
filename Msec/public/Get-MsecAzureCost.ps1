@@ -87,12 +87,12 @@ function Get-MsecAzureCost {
     begin {
         $context = Get-AzContext -ErrorAction SilentlyContinue
         if (-not $context) {
-            throw 'No Azure context. Run Connect-AzAccount, then Select-MsecAzureContext to pick the subscription to report on.'
+            throw 'No Azure context. Run Connect-AzAccount, then Set-MsecContext to pick the subscription to report on.'
         }
 
         $subscription = if ($SubscriptionId) { $SubscriptionId } else { [string] $context.Subscription.Id }
         if (-not $subscription) {
-            throw 'The Az context has no subscription. Run Select-MsecAzureContext to pick one.'
+            throw 'The Az context has no subscription. Run Set-MsecContext to pick one.'
         }
 
         $to   = [DateTime]::UtcNow.Date

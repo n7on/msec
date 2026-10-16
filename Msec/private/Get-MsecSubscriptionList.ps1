@@ -13,7 +13,7 @@ function Get-MsecSubscriptionList {
         in account can see, acquiring a token per tenant. That is a wider blast radius than
         anything in this module wants: one unreachable or slow tenant delays or fails a query
         about subscriptions you were not asking about. The tenant comes from the active Az
-        context, so switching tenant is Set-AzContext (or Select-MsecAzureContext) - explicit,
+        context, so switching tenant is Set-AzContext (or Set-MsecContext) - explicit,
         and visible in -Verbose - rather than an implicit fan-out.
 
         WHY NOT Get-AzContext -ListAvailable, which is local and instant. It answers a different

@@ -47,7 +47,7 @@ SEVERAL SUBSCRIPTIONS, ONE DOCUMENT.
 The scope is whatever the Az context is on, which
 is also what Run-Command acts on, so the two cannot disagree.
 Re-run against the same
-path after Select-MsecAzureContext and the next subscription gets its own sheet and its
+path after Set-MsecContext and the next subscription gets its own sheet and its
 own chart.
 
 EVERY VM APPEARS, INCLUDING THE ONES THAT DID NOT ANSWER - a stopped machine, a wedged
@@ -59,7 +59,7 @@ reach is not evidence.
 
 ### EXAMPLE 1
 ```
-Select-MsecAzureContext -Subscription 'Contoso Production'
+Set-MsecContext -Name 'contoso-prod'
 Export-MsecVMNtpReport -Path "./vm-timesync-$(Get-Date -Format 'yyyy-MM-dd').xlsx"
 ```
 
@@ -68,7 +68,7 @@ Export-MsecVMNtpReport -Path "./vm-timesync-$(Get-Date -Format 'yyyy-MM-dd').xls
 # One evidence document covering the estate, a subscription per sheet.
 $file = "./vm-timesync-$(Get-Date -Format 'yyyy-MM-dd').xlsx"
 foreach ($s in 'PROD', 'TEST', 'DEV') {
-    Select-MsecAzureContext -Subscription $s
+    Set-MsecContext -Name $s
     Export-MsecVMNtpReport -Path $file
 }
 ```

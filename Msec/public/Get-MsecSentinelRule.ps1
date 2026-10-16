@@ -41,7 +41,7 @@ function Get-MsecSentinelRule {
         as a Sentinel with no rules, which is a different and much more alarming thing.
 
     .PARAMETER SubscriptionId
-        Subscription to search. Defaults to the active Az context. Use Select-MsecAzureContext
+        Subscription to search. Defaults to the active Az context. Use Set-MsecContext
         to move the context itself.
 
     .PARAMETER ResourceGroupName

@@ -57,6 +57,6 @@ function Resolve-MsecSubscription {
         } else { '' }
         throw ("Subscription '$item' not found$where. Available there: $available. " +
                'Subscriptions are per-tenant, so one that exists in another tenant will not ' +
-               'appear here - Select-MsecAzureContext switches tenant as well as subscription.')
+               'appear here - Set-MsecContext switches tenant as well as subscription, and moves the msec sessions with it.')
     }
 }

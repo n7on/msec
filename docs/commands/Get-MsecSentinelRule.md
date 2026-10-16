@@ -121,7 +121,7 @@ band, not a severity.
 ### -SubscriptionId
 Subscription to search.
 Defaults to the active Az context.
-Use Select-MsecAzureContext
+Use Set-MsecContext
 to move the context itself.
 
 ```yaml

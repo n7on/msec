@@ -95,90 +95,14 @@ Describe 'tenant connection profile' {
     }
 }
 
-Describe 'Select-MsecAzureContext reconnect' {
+Describe 'Set-MsecContext reconnect' {
 
     BeforeEach {
         InModuleScope Msec { $script:MsecSession = $null }
     }
 
-    It 'reconnects the app session for a tenant with a saved profile' {
-        InModuleScope Msec {
-            Save-MsecTenantProfile -TenantId 'tenant-x' -KeyVaultName 'kv-x' -ClientId 'client-x'
-
-            $ctx = [pscustomobject]@{ Name = 'Prod'; Tenant = [pscustomobject]@{ Id = 'tenant-x' }
-                                      Subscription = [pscustomobject]@{ Name = 'Prod'; Id = 'sub-1' }
-                                      Account = [pscustomobject]@{ Id = 'me@x.com' }; Environment = 'AzureCloud' }
-            Mock Get-AzContext -MockWith { $ctx }
-            Mock Select-AzContext -MockWith { }
-            Mock Connect-Msec -MockWith { }
-
-            Select-MsecAzureContext -Subscription 'Prod' | Out-Null
-
-            # Replayed from the profile, against the tenant just switched to, and with -NoSave
-            # because this is replaying a profile rather than creating one.
-            Should -Invoke Connect-Msec -Times 1 -Exactly -ParameterFilter {
-                $KeyVaultName -eq 'kv-x' -and
-                $ClientId     -eq 'client-x' -and
-                $TenantId     -eq 'tenant-x' -and
-                $NoSave
-            }
-        }
-    }
-    It 'does not reconnect with -NoConnect, or when the session is already that tenant' {
-        InModuleScope Msec {
-            Save-MsecTenantProfile -TenantId 'tenant-y' -KeyVaultName 'kv-y' -ClientId 'client-y'
-
-            $ctx = [pscustomobject]@{ Name = 'Prod'; Tenant = [pscustomobject]@{ Id = 'tenant-y' }
-                                      Subscription = [pscustomobject]@{ Name = 'Prod'; Id = 'sub-1' }
-                                      Account = [pscustomobject]@{ Id = 'me@x.com' }; Environment = 'AzureCloud' }
-            Mock Get-AzContext -MockWith { $ctx }
-            Mock Select-AzContext -MockWith { }
-            Mock Connect-Msec -MockWith { }
-
-            Select-MsecAzureContext -Subscription 'Prod' -NoConnect | Out-Null
-            Should -Invoke Connect-Msec -Times 0 -Exactly
-
-            # Already on this tenant: a switch between two subscriptions in one tenant must
-            # not re-authenticate.
-            $script:MsecSession = @{ TenantId = 'tenant-y'; Endpoints = @{ EnvironmentName = 'AzureCloud' } }
-            Select-MsecAzureContext -Subscription 'Prod' | Out-Null
-            Should -Invoke Connect-Msec -Times 0 -Exactly
-        }
-    }
-
-    It 'still switches the context when the reconnect fails' {
-        $warnings = @()
-        $result = InModuleScope Msec {
-            Save-MsecTenantProfile -TenantId 'tenant-z' -KeyVaultName 'kv-gone' -ClientId 'client-z'
-
-            $ctx = [pscustomobject]@{ Name = 'Prod'; Tenant = [pscustomobject]@{ Id = 'tenant-z' }
-                                      Subscription = [pscustomobject]@{ Name = 'Prod'; Id = 'sub-9' }
-                                      Account = [pscustomobject]@{ Id = 'me@x.com' }; Environment = 'AzureCloud' }
-            Mock Get-AzContext -MockWith { $ctx }
-            Mock Select-AzContext -MockWith { }
-            Mock Connect-Msec -MockWith { throw 'The vault kv-gone was not found.' }
-
-            Select-MsecAzureContext -Subscription 'Prod'
-        } -WarningVariable warnings -WarningAction SilentlyContinue
-
-        # The thing actually asked for succeeded.
-        $result.SubscriptionId | Should -Be 'sub-9'
-        $result.TenantId       | Should -Be 'tenant-z'
-        ($warnings -join ' ')  | Should -Match 'could not reconnect'
-        ($warnings -join ' ')  | Should -Match 'kv-gone'
-    }
-
-    It 'does nothing special for a tenant with no profile' {
-        InModuleScope Msec {
-            $ctx = [pscustomobject]@{ Name = 'Prod'; Tenant = [pscustomobject]@{ Id = 'tenant-unknown' }
-                                      Subscription = [pscustomobject]@{ Name = 'Prod'; Id = 'sub-2' }
-                                      Account = [pscustomobject]@{ Id = 'me@x.com' }; Environment = 'AzureCloud' }
-            Mock Get-AzContext -MockWith { $ctx }
-            Mock Select-AzContext -MockWith { }
-            Mock Connect-Msec -MockWith { }
-
-            Select-MsecAzureContext -Subscription 'Prod' | Out-Null
-            Should -Invoke Connect-Msec -Times 0 -Exactly
-        }
-    }
+    # The four auto-reconnect tests that used to live here went with Set-MsecContext.
+    # That command carried the "switch context, app session follows" behaviour; Set-MsecContext
+    # replaces it and is covered by MsecContextStore.Tests.ps1. The profile itself remains -
+    # Connect-MsecAdmin reads the admin account from it, Save-MsecContext the certificate name.
 }

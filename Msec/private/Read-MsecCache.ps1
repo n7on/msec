@@ -17,7 +17,7 @@ function Read-MsecCache {
         Nor does it check the tenant, because it cannot need to: Get-MsecCachePath puts each
         tenant's caches in their own folder, so reading the wrong tenant's data is not something
         this function could do. That also means both tenants stay warm across a
-        Select-MsecAzureContext flip, which an on-read check could not manage - it would discard
+        Set-MsecContext flip, which an on-read check could not manage - it would discard
         the other tenant's cache and the next query would overwrite it.
 
     .PARAMETER Name

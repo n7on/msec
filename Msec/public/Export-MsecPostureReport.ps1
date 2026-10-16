@@ -386,7 +386,7 @@ function Export-MsecPostureReport {
         # writing it. A gap in the chart is recoverable; a wrong number nobody questions is not.
         $azTenant = (Get-AzContext -ErrorAction SilentlyContinue).Tenant.Id
         if ($azTenant -and $tenantId -and $azTenant -ne $tenantId) {
-            $message = "Az context is on tenant $azTenant but this session is connected to $tenantId, so Azure Policy compliance would be the WRONG TENANT'S data. Skipped. Move the Az context with Select-MsecAzureContext, or exclude it with -Measurement."
+            $message = "Az context is on tenant $azTenant but this session is connected to $tenantId, so Azure Policy compliance would be the WRONG TENANT'S data. Skipped. Move the Az context with Set-MsecContext, or exclude it with -Measurement."
             Write-Warning $message
             $runLog.Add([pscustomobject]@{
                 RunUtc = $runUtc; Source = 'Search-MsecAzureResourceGraph (Policy/Compliance)'

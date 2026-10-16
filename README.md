@@ -98,7 +98,7 @@ Azure RBAC on top of anything Entra granted. Four use two identities, each for a
 | `Set-MsecDefenderIncident` | you | delegated `SecurityIncident.ReadWrite.All` via `Connect-MsecAdmin` |
 | `Grant-MsecAzureDevOpsPermission` | you | permission to manage ADO permissions (Project Collection Administrator or equivalent) |
 | `Get-MsecAzureRoleAssignment` | both | Reader for the assignments; the app resolves principal names through Graph |
-| `Select-MsecAzureContext` | both | an Az context to switch, and the saved profile to reconnect the app session behind it |
+| `Set-MsecContext` | both | an Az context to switch to, and the saved context naming the vault and admin account behind it |
 
 `Invoke-MsecAzureVMScript` is the one to know about on the Azure side: Reader alone gets a 403
 there, because `runCommand/action` is a Contributor-level right even though the bundled scripts
@@ -120,7 +120,7 @@ are stated in each command's help: `Connect-Msec` signs the app assertion with y
 is the bootstrap), `Connect-MsecTeams -AsCurrentUser` selects between two modes explicitly, and
 `Get-MsecAzureRoleAssignment` reads assignments through ARM while resolving principal NAMES through
 the app's Graph session, because `Get-AzADUser` on a permissionless ARM connection returns blank
-names rather than failing, and `Select-MsecAzureContext` moves both on purpose - see below.
+names rather than failing, and `Set-MsecContext` moves both on purpose - see below.
 
 ### Switching tenant or subscription
 
@@ -128,22 +128,27 @@ Two identities means two things to move, and moving one used to leave the other 
 Az context to another tenant and every Graph or Defender call kept answering for the tenant you
 just left. Nothing failed, which is what made it dangerous.
 
-`Select-MsecAzureContext` moves both. It picks from the contexts Az has already saved - one per
-account, tenant, subscription and cloud you have signed in to - and **`Connect-Msec` follows it
-automatically**:
+`Set-MsecContext` moves all of them. Name a context once with `Save-MsecContext` and every
+later switch is one command - the Azure context, the app session and the write session land
+together, and the workload sessions that cannot follow a tenant change are disconnected rather
+than left answering for the tenant you left:
 
 ```powershell
-# Tab-completes subscription names; -User only when one subscription is signed in twice.
-Select-MsecAzureContext 'Production'
+# Once per tenant, from a context you are already in.
+Connect-Msec -KeyVaultName kv-prod
+Connect-MsecAdmin
+Save-MsecContext prod
 
-# SubscriptionName : Production
-# TenantId         : 00000000-0000-0000-0000-000000000000
-# Account          : you@contoso.com
+# Then forever after. Tab-completes the saved names.
+Set-MsecContext prod -Admin
+
+# Where am I? One row per session surface, with whether each agrees.
+Get-MsecContext
 ```
 
-`Connect-Msec` saves a profile per tenant - vault name, client id, certificate name - and the
-switch replays it. **No secret is stored and none is needed**: signing happens inside Key Vault
-and the private key never leaves it.
+`Connect-Msec` still saves a profile per tenant - vault name, client id, certificate name,
+and the admin account last used - which is where `Save-MsecContext` gets the certificate name
+and `Connect-MsecAdmin` gets the account it checks your sign-in against.
 
 Three things worth knowing:
 
@@ -281,7 +286,7 @@ answer, and an empty result with one as unread.
 - [New-MsecApp](./docs/commands/New-MsecApp.md) - Create or update the msec app registration, its Key Vault certificate, and admin consent
 - [Connect-Msec](./docs/commands/Connect-Msec.md) - Open a session bound to a certificate in Azure Key Vault
 - [Disconnect-Msec](./docs/commands/Disconnect-Msec.md) - Clear the session and its cached tokens
-- [Select-MsecAzureContext](./docs/commands/Select-MsecAzureContext.md) - Switch Azure context by subscription name; the msec app session follows it into the new tenant
+- [Set-MsecContext](./docs/commands/Set-MsecContext.md) - Switch the Azure context, the app session and the write session together, by name
 - [Connect-MsecAdmin](./docs/commands/Connect-MsecAdmin.md) - Sign in AS YOU with delegated write scopes, for the commands that change something
 - [Connect-MsecGraphSdk](./docs/commands/Connect-MsecGraphSdk.md) - Hand the msec session's token to the Microsoft.Graph SDK, so Get-Mg* runs as the msec app
 - [Connect-MsecExchangeOnline](./docs/commands/Connect-MsecExchangeOnline.md) - Same for ExchangeOnlineManagement
@@ -384,6 +389,11 @@ Compliance Administrator), which is what a 403 there usually means.
 - [Get-MsecAppGatewayClientActivity](./docs/commands/Get-MsecAppGatewayClientActivity.md) - Everything a client IP did through an Application Gateway, with whether it ever completed an authentication - reaching a login page is not logging in
 - [Get-MsecMySqlConfiguration](./docs/commands/Get-MsecMySqlConfiguration.md) - MySQL flexible server parameters, with whether a person set each one or the platform did. Resource Graph cannot see these at all. Runs as the signed-in user
   - -UserOverride is the deviation report, and it is not the same as Value -ne DefaultValue - a parameter set deliberately to its own default is still an override
+- [Save-MsecContext](./docs/commands/Save-MsecContext.md) - Remember the current sessions under a name
+- [Set-MsecContext](./docs/commands/Set-MsecContext.md) - Switch the Azure context, the app session and the write session together, by name
+- [Remove-MsecContext](./docs/commands/Remove-MsecContext.md) - Forget a saved context. Disconnects nothing
+- [Get-MsecContext](./docs/commands/Get-MsecContext.md) - Every session surface at once - Azure, the msec app, the write session and each workload - with the tenant it is bound to and whether that matches
+  - A stale session is the failure it exists for: an absent one fails loudly, one left on the tenant you switched away from succeeds and returns the wrong tenant's data
 - [Search-MsecAzureResourceGraph](./docs/commands/Search-MsecAzureResourceGraph.md) - Run a bundled KQL query against Azure Resource Graph
   - -ResourceType ApplicationInsights answers where every component's telemetry actually lands, and which workspaces were auto-created rather than chosen
 - [Search-MsecLogAnalytics](./docs/commands/Search-MsecLogAnalytics.md) - Run a bundled KQL query against a Log Analytics workspace

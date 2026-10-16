@@ -982,7 +982,7 @@ Describe 'Export-MsecPostureReport' -Skip:(-not $script:HasExcel) {
         }
 
         ($result -join ' ') | Should -Match 'WRONG TENANT'
-        ($result -join ' ') | Should -Match 'Select-MsecAzureContext'
+        ($result -join ' ') | Should -Match 'Set-MsecContext'
 
         # No sheet at all - a gap in the chart, not a wrong number.
         { Import-Excel -Path $script:Book -WorksheetName 'PolicyCompliance' -ErrorAction Stop } | Should -Throw

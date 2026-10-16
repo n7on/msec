@@ -45,7 +45,7 @@ Required Azure RBAC for the calling user (or group):
   - 'Key Vault Crypto User'      on the vault (to sign with the key).
 
 A SUCCESSFUL CONNECTION IS REMEMBERED for the tenant, so a later
-Select-MsecAzureContext into it reconnects the app session on its own rather than
+Set-MsecContext into it reconnects the app session on its own rather than
 leaving the two identities pointing at different tenants.
 Vault name, client id and
 certificate name only - no secret, because there isn't one to store: signing happens
@@ -133,7 +133,7 @@ Accept wildcard characters: False
 ```
 
 ### -NoSave
-Do not remember this connection for Select-MsecAzureContext to replay.
+Do not remember this connection for Set-MsecContext to replay.
 
 ```yaml
 Type: SwitchParameter

@@ -22,7 +22,7 @@ function Export-MsecVMUpdateReport {
 
         SEVERAL SUBSCRIPTIONS, ONE DOCUMENT. The scope is whatever the Az context is on, which
         is also what Run-Command acts on, so the two cannot disagree. Re-run against the same
-        path after Select-MsecAzureContext and the next subscription gets its own sheet in the
+        path after Set-MsecContext and the next subscription gets its own sheet in the
         same file, with its own chart on the Dashboard.
 
         EVERY VM APPEARS, INCLUDING THE ONES THAT DID NOT ANSWER. A stopped machine, a wedged
@@ -69,14 +69,14 @@ function Export-MsecVMUpdateReport {
         Emit the per-VM rows as objects as well as writing them.
 
     .EXAMPLE
-        Select-MsecAzureContext -Subscription 'Contoso Production'
+        Set-MsecContext -Name 'contoso-prod'
         Export-MsecVMUpdateReport -Path "./vm-patching-$(Get-Date -Format 'yyyy-MM-dd').xlsx"
 
     .EXAMPLE
         # One evidence document covering the estate, a subscription per sheet.
         $file = "./vm-patching-$(Get-Date -Format 'yyyy-MM-dd').xlsx"
         foreach ($s in 'PROD', 'TEST', 'DEV') {
-            Select-MsecAzureContext -Subscription $s
+            Set-MsecContext -Name $s
             Export-MsecVMUpdateReport -Path $file
         }
 
