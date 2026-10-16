@@ -54,6 +54,14 @@ function Get-MsecMySqlConfiguration {
         Only parameters matching these wildcard patterns, e.g. 'tls_*', '*encrypt*'. Filtered
         client-side - every parameter is fetched regardless.
 
+        AN UNMATCHED NAME RETURNS NOTHING RATHER THAN FAILING, and a pattern that matched
+        nothing is WARNED about by name, because an empty result from a typo looks exactly
+        like an empty result from a clean estate. Server PROPERTIES are not parameters: the
+        engine version, location and state come from
+        Search-MsecAzureResourceGraph -ResourceType MySQL, not from here. A work item shipped
+        with '-Name version' as its reproduce command on that misunderstanding; it returns no
+        rows, and silence reads as "no problem found".
+
     .PARAMETER UserOverride
         Only parameters someone has set explicitly - Source 'user-override'. This is the
         deviation report, and it is NOT the same as Value -ne DefaultValue; see the
@@ -126,6 +134,12 @@ function Get-MsecMySqlConfiguration {
 
     $unreadable = 0
     $i = 0
+    # Which -Name patterns actually matched something. A wildcard that matches nothing returns
+    # an empty set with no error, which reads as "no deviation found" rather than "that is not
+    # a parameter" - the same "could not find" rendering as "nothing there" this module warns
+    # about everywhere else. Tracked so it can be said out loud at the end.
+    $matchedPattern = @{}
+    foreach ($pattern in @($Name)) { if ($pattern) { $matchedPattern[$pattern] = $false } }
     foreach ($server in $servers) {
         $i++
         Write-Progress -Id 1840 -Activity 'Reading MySQL server parameters' `
@@ -154,7 +168,9 @@ function Get-MsecMySqlConfiguration {
             $p = $entry.properties
             if ($Name) {
                 $matched = $false
-                foreach ($pattern in $Name) { if ($entry.name -like $pattern) { $matched = $true; break } }
+                foreach ($pattern in $Name) {
+                    if ($entry.name -like $pattern) { $matched = $true; $matchedPattern[$pattern] = $true }
+                }
                 if (-not $matched) { continue }
             }
 
@@ -194,6 +210,20 @@ function Get-MsecMySqlConfiguration {
     }
 
     Write-Progress -Id 1840 -Activity 'Reading MySQL server parameters' -Completed
+
+    # SAID OUT LOUD, because an empty result from a typo is indistinguishable from an empty
+    # result from a clean estate. A work item once shipped with '-Name version' as its
+    # reproduce command: it returns nothing, because the engine version is a property of the
+    # server and not one of its parameters, and a reader would have taken the silence for
+    # "no problem here".
+    $missed = @($matchedPattern.Keys | Where-Object { -not $matchedPattern[$_] })
+    if ($missed.Count) {
+        Write-Warning ("No parameter matched: $($missed -join ', '). -Name is a wildcard filter over " +
+            "MySQL SERVER PARAMETERS, so an unmatched name returns nothing rather than failing. " +
+            "An empty result here means NO MATCH, not 'no deviation'. Run without -Name to see " +
+            'what exists, and note that server properties such as the engine version are not ' +
+            'parameters - Search-MsecAzureResourceGraph -ResourceType MySQL has those.')
+    }
 
     if ($unreadable -gt 0) {
         Write-Warning "$unreadable server(s) could not be read and are absent from this output. Check Reader access on them before concluding anything about the estate."

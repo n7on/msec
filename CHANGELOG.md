@@ -2,6 +2,113 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `Save-MsecContext`, `Set-MsecContext`, `Remove-MsecContext` - named contexts, so the Azure
+  context, the app session and the write session move together instead of one at a time.
+
+  THREE SESSIONS WITH THREE COMMANDS AND THREE IDEAS OF WHICH TENANT THEY ARE ON is the
+  problem. Moving one and forgetting another leaves commands reading one tenant and writing to
+  another, which fails silently rather than loudly. `Save-MsecContext` snapshots what is
+  connected now; `Set-MsecContext <name>` puts it all back.
+
+  IT DISCONNECTS WHAT IT CANNOT REALIGN. Exchange, Teams, SharePoint and Purview sessions live
+  inside other modules and cannot be re-pointed at a new tenant - only torn down. Left alone
+  they keep working against the tenant you left, returning correct-looking data from the wrong
+  place, which is worse than being disconnected. `-KeepWorkload` opts out.
+
+  IT WILL NOT START A WRITE SESSION YOU DID NOT HAVE unless `-Admin` is passed, because signing
+  in is interactive and a prompt in the middle of a context switch is a surprise. An existing
+  one is always moved - leaving it behind is the dangerous case. The saved admin account is
+  passed to `Connect-MsecAdmin -Account`, which refuses a sign-in landing on anyone else.
+
+  Found while building it: the app session carries the Key Vault KEY name, not the certificate
+  name, so saving `$session.CertificateName` recorded an empty string and the reconnect failed
+  on parameter binding. The certificate name lives in the tenant profile.
+
+- `Get-MsecContext` - one row per session surface, with the tenant each is bound to and
+  whether it agrees with the Azure context.
+
+  WORKING WITH msec MEANS UP TO SEVEN SESSIONS - the Az context, the app-only session, the
+  delegated write session, and one each for Exchange, Teams, SharePoint and Purview - and
+  nothing had ever shown them together. "Which tenant is this command about to use" was
+  answerable only by running something and inferring it from the answer.
+
+  A STALE SESSION IS THE FAILURE, NOT A MISSING ONE. An absent session fails loudly and at
+  once. One left behind on the tenant you switched away from SUCCEEDS, and returns
+  correct-looking data from the wrong tenant. The Aligned column is the point of the command.
+
+  NOT CONNECTED AND CANNOT TELL STAY SEPARATE. A module that is not loaded reports
+  `ModuleNotLoaded`, a failed probe reports `Unknown`, and Teams always reports `Unknown`
+  because `Get-CsTenant` is a round trip and a command built to end guesses about session
+  state must not make one. PnP needed special handling: it THROWS rather than returning null
+  when not connected, which the generic catch filed as `Unknown` - a knowable state reported
+  as unknowable, blurring the exact distinction the command exists to keep.
+
+  Probes only modules already loaded. Importing one to interrogate it would change the state
+  being reported, and auto-connecting on a read is how a ten-second Exchange sign-in ends up
+  inside an unrelated command.
+
+### Fixed
+- `Get-MsecMySqlConfiguration` warns when a `-Name` pattern matches no parameter, instead of
+  returning an empty set in silence.
+
+  AN EMPTY RESULT FROM A TYPO LOOKED EXACTLY LIKE AN EMPTY RESULT FROM A CLEAN ESTATE, which
+  is the "could not find" rendering as "nothing there" that this module warns about
+  everywhere else - in one of its own commands. A work item shipped with
+  `Get-MsecMySqlConfiguration -Name version` as its reproduce command, on the reasonable
+  assumption that the engine version is a parameter. It is a property of the server resource,
+  so the command returns nothing, and a reader following the item would have taken the silence
+  for "no problem here". Caught before anyone acted on it, by the person who wrote it asking
+  whether it worked.
+
+  The warning names the unmatched pattern, says an empty result means no match rather than no
+  deviation, and points at `Search-MsecAzureResourceGraph -ResourceType MySQL` for the
+  properties that are not parameters.
+
+### Removed
+- `Select-MsecAzureContext`. Use `Set-MsecContext`.
+
+  BREAKING. It was exported in 0.5.0, so this is a breaking change - taken deliberately
+  because the module has exactly one consumer today, which is the only window in which the
+  cost is zero.
+
+  IT WAS NEVER THE BOOTSTRAP, which was the argument for keeping it. Both commands only pick
+  among Azure contexts that `Connect-AzAccount` already created, so they share a prerequisite
+  and `Set-MsecContext` does strictly more: it moves the write session too, and disconnects
+  the Exchange, Teams, SharePoint and Purview sessions that cannot follow a tenant change and
+  otherwise keep answering for the tenant you left.
+
+  Gone with it: the "switch the Azure context and the app session follows" behaviour, which
+  lived in that command and nowhere else. `Set-MsecContext` replaces it and does more - it
+  moves the write session too, and disconnects the Exchange, Teams, SharePoint and Purview
+  sessions that cannot follow a tenant change. The tenant profile remains, now as a lookup
+  rather than a reconnect mechanism: `Save-MsecContext` reads the certificate name from it and
+  `Connect-MsecAdmin` the account it checks a sign-in against.
+
+### Changed
+- `Connect-MsecAdmin` gained `-ContextScope`, defaulting to `CurrentUser`, so the write
+  session outlives the shell the way the read session already did.
+
+  THE TWO CONNECT COMMANDS BEHAVED DIFFERENTLY AND NOTHING SAID SO. `Connect-Msec` persists
+  because a saved tenant profile lets any later session re-authenticate with the Key Vault
+  certificate. `Connect-MsecAdmin` called `Connect-MgGraph` without `-ContextScope`, whose own
+  default is `Process` - so the token stayed in the signing shell, the MSAL cache file was
+  created and left at zero bytes, and every other process saw no session at all. It surfaced as
+  "the admin session is not being seen" and took reading the cache file on disk to explain.
+
+  THE NEW DEFAULT IS A REAL WIDENING, and the help says so rather than selling it as a
+  convenience: until the token expires or `Disconnect-MgGraph` runs, any process running as
+  that user can obtain a delegated token carrying their write scopes, unprompted and
+  unobserved. Writes are still delegated rather than application permissions, so every change
+  remains attributable to a named account - but "signed in once on this machine" is a weaker
+  claim than "at the keyboard now". `-ContextScope Process` restores the old behaviour.
+
+  The test stub for `Connect-MgGraph` had to gain the parameter too. Without it the call fails
+  to bind only where the stub is used - on a machine with the real Graph SDK installed the
+  same test passes, which is the kind of difference that reaches CI and not the author.
+
 ## [0.5.0] - 2026-10-14
 
 ### Added

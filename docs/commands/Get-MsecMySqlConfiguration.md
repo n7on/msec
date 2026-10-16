@@ -131,6 +131,16 @@ Only parameters matching these wildcard patterns, e.g.
 Filtered
 client-side - every parameter is fetched regardless.
 
+AN UNMATCHED NAME RETURNS NOTHING RATHER THAN FAILING, and a pattern that matched
+nothing is WARNED about by name, because an empty result from a typo looks exactly
+like an empty result from a clean estate.
+Server PROPERTIES are not parameters: the
+engine version, location and state come from
+Search-MsecAzureResourceGraph -ResourceType MySQL, not from here.
+A work item shipped
+with '-Name version' as its reproduce command on that misunderstanding; it returns no
+rows, and silence reads as "no problem found".
+
 ```yaml
 Type: String[]
 Parameter Sets: (All)

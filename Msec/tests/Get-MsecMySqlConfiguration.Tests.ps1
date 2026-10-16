@@ -185,4 +185,38 @@ Describe 'Get-MsecMySqlConfiguration' {
             { Get-MsecMySqlConfiguration } | Should -Throw '*runs as you, not as the msec app*'
         }
     }
+
+    It 'warns, naming the pattern, when -Name matches no parameter' {
+        # REGRESSION. -Name is a client-side wildcard, so a name that is not a parameter at all
+        # returns an empty set with no error. A work item shipped with '-Name version' as its
+        # reproduce command - the engine version is a property of the server, not one of its
+        # parameters - and the silence would have read as "no problem found".
+        $entries = @(
+            (New-Entry -Name 'tls_version'              -Value 'TLSv1.2' -Default 'TLSv1.2,TLSv1.3' -Source 'user-override'),
+            (New-Entry -Name 'require_secure_transport' -Value 'ON'      -Default 'ON'              -Source 'user-override')
+        )
+        $w = InModuleScope Msec -Parameters @{ Entries = $entries } {
+            $script:Entries = $Entries
+            Mock Invoke-RestMethod -MockWith { [pscustomobject]@{ value = $script:Entries } }
+            Get-MsecMySqlConfiguration -Name 'version' -WarningVariable wv -WarningAction SilentlyContinue | Out-Null
+            "$wv"
+        }
+
+        $w | Should -Match 'No parameter matched: version'
+        $w | Should -Match 'NO MATCH'
+    }
+
+    It 'stays quiet when every -Name pattern matched something' {
+        $entries = @(
+            (New-Entry -Name 'tls_version' -Value 'TLSv1.2' -Default 'TLSv1.2,TLSv1.3' -Source 'user-override')
+        )
+        $w = InModuleScope Msec -Parameters @{ Entries = $entries } {
+            $script:Entries = $Entries
+            Mock Invoke-RestMethod -MockWith { [pscustomobject]@{ value = $script:Entries } }
+            Get-MsecMySqlConfiguration -Name 'tls_*' -WarningVariable wv -WarningAction SilentlyContinue | Out-Null
+            "$wv"
+        }
+
+        $w | Should -Not -Match 'No parameter matched'
+    }
 }
