@@ -14,8 +14,8 @@ Read commands keep using the app; this session is only for writes.
 ## SYNTAX
 
 ```
-Connect-MsecAdmin [[-Scope] <String[]>] [[-TenantId] <String>] [-PassThru]
- [<CommonParameters>]
+Connect-MsecAdmin [[-Scope] <String[]>] [[-TenantId] <String>] [[-Account] <String>] [[-ContextScope] <String>]
+ [-PassThru] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -47,6 +47,28 @@ fails with a 403 that names nothing.
 Every requested scope is checked against what was
 actually granted, and a missing one is reported by name here rather than discovered
 later.
+
+THE SESSION OUTLIVES THE SHELL BY DEFAULT, THE SAME WAY Connect-Msec DOES.
+Its
+read session persists because a tenant profile lets any later session re-authenticate
+with the Key Vault certificate; this one persists because -ContextScope CurrentUser
+caches a refresh token.
+Connect-MgGraph's own default is Process scope, which left the
+two commands behaving differently - the read session available everywhere, the write
+session only inside the shell that signed in, with an empty MSAL cache file on disk as
+the only clue.
+
+THAT PERSISTENCE IS A REAL WIDENING, not a convenience.
+Until the token expires or you
+run Disconnect-MgGraph, any process running as you can obtain a delegated token
+carrying your write scopes, with no prompt and nobody watching.
+The module's position
+is still that writes belong to a person - that is why they are delegated rather than
+application permissions, and why every change is attributable to a named account - but
+"a person signed in once on this machine" is a weaker claim than "a person is at the
+keyboard now".
+Use -ContextScope Process where that distinction matters, and
+Disconnect-MgGraph when you are done.
 
 IT WILL REFUSE A DIFFERENT TENANT FROM THE ONE YOU ARE READING.
 If Connect-Msec holds
@@ -107,6 +129,46 @@ Aliases:
 Required: False
 Position: 2
 Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Account
+The account that must end up signed in.
+Cannot select one - Connect-MgGraph has no
+such control and the browser reuses whichever identity it remembers - but a sign-in
+that lands on a different account is REFUSED and the session closed, rather than
+leaving you writing as somebody else.
+
+Without it, a mismatch against the account this tenant used last time is a warning.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 3
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -ContextScope
+Where the token lives.
+'CurrentUser' (default) caches a refresh token so other
+sessions - and other processes running as you - can write.
+'Process' keeps it in this
+shell only, which is Connect-MgGraph's own default.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 4
+Default value: CurrentUser
 Accept pipeline input: False
 Accept wildcard characters: False
 ```

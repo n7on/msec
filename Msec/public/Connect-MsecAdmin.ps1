@@ -26,9 +26,39 @@ function Connect-MsecAdmin {
         actually granted, and a missing one is reported by name here rather than discovered
         later.
 
+        THE SESSION OUTLIVES THE SHELL BY DEFAULT, THE SAME WAY Connect-Msec DOES. Its
+        read session persists because a tenant profile lets any later session re-authenticate
+        with the Key Vault certificate; this one persists because -ContextScope CurrentUser
+        caches a refresh token. Connect-MgGraph's own default is Process scope, which left the
+        two commands behaving differently - the read session available everywhere, the write
+        session only inside the shell that signed in, with an empty MSAL cache file on disk as
+        the only clue.
+
+        THAT PERSISTENCE IS A REAL WIDENING, not a convenience. Until the token expires or you
+        run Disconnect-MgGraph, any process running as you can obtain a delegated token
+        carrying your write scopes, with no prompt and nobody watching. The module's position
+        is still that writes belong to a person - that is why they are delegated rather than
+        application permissions, and why every change is attributable to a named account - but
+        "a person signed in once on this machine" is a weaker claim than "a person is at the
+        keyboard now". Use -ContextScope Process where that distinction matters, and
+        Disconnect-MgGraph when you are done.
+
         IT WILL REFUSE A DIFFERENT TENANT FROM THE ONE YOU ARE READING. If Connect-Msec holds
         a session, this must sign in to the same tenant. Reading one tenant and writing to
         another is the kind of mistake that is obvious afterwards and invisible at the time.
+
+    .PARAMETER Account
+        The account that must end up signed in. Cannot select one - Connect-MgGraph has no
+        such control and the browser reuses whichever identity it remembers - but a sign-in
+        that lands on a different account is REFUSED and the session closed, rather than
+        leaving you writing as somebody else.
+
+        Without it, a mismatch against the account this tenant used last time is a warning.
+
+    .PARAMETER ContextScope
+        Where the token lives. 'CurrentUser' (default) caches a refresh token so other
+        sessions - and other processes running as you - can write. 'Process' keeps it in this
+        shell only, which is Connect-MgGraph's own default.
 
     .PARAMETER Scope
         Delegated scopes to request. DEFAULTS TO EVERY SCOPE THE MODULE'S WRITE COMMANDS NEED,
@@ -84,6 +114,36 @@ function Connect-MsecAdmin {
 
         [string] $TenantId,
 
+        # THE IDENTITY THAT MUST END UP SIGNED IN. Connect-MgGraph has no way to FORCE an
+        # account - the browser reuses whichever it remembers - so this cannot select one.
+        # What it can do is refuse when the wrong one arrives, which is the whole value: with
+        # two tenants and two identities the wrong account is picked silently, and the
+        # consequence surfaces much later either as a write into the tenant you did not mean
+        # or as AADSTS500213, a cross-tenant policy error that names nothing about accounts.
+        #
+        # Defaults to the account recorded for this tenant by the last successful sign-in, so
+        # after the first time it checks itself.
+        [string] $Account,
+
+        # WHERE THE TOKEN LIVES, AND IT DEFAULTS TO SURVIVING THIS SHELL - matching
+        # Connect-Msec, which saves a tenant profile that any later session replays.
+        #
+        # Connect-MgGraph's own default is 'Process': the token stays in the memory of the
+        # shell that signed in, the MSAL cache file is created and left EMPTY, and every
+        # other process sees no session at all. That is a surprising difference between the
+        # module's two connect commands - the read session works everywhere, the write
+        # session works in exactly one place - and it was reported as the admin session
+        # "not being seen".
+        #
+        # 'CurrentUser' CACHES A REFRESH TOKEN ON DISK, which is a real widening and the
+        # reason this is written down rather than silently flipped: until it expires or you
+        # Disconnect-MgGraph, ANY process running as you can obtain a delegated token with
+        # your write scopes, without a prompt and without you watching. That is a deliberate
+        # trade for making the command behave like its sibling. Use -ContextScope Process
+        # for a session that dies with the shell.
+        [ValidateSet('Process', 'CurrentUser')]
+        [string] $ContextScope = 'CurrentUser',
+
         [switch] $PassThru
     )
 
@@ -97,8 +157,18 @@ function Connect-MsecAdmin {
         $TenantId = $script:MsecSession.TenantId
     }
 
-    $connectArgs = @{ Scopes = $Scope; NoWelcome = $true; ErrorAction = 'Stop' }
+    $connectArgs = @{ Scopes = $Scope; NoWelcome = $true; ErrorAction = 'Stop'
+                      ContextScope = $ContextScope }
     if ($TenantId) { $connectArgs['TenantId'] = $TenantId }
+
+    # SAID OUT LOUD SO IT CAN BE QUOTED. "Which scopes does it actually ask for?" is the
+    # first question an administrator asks when consent is refused, and the answer was
+    # previously only discoverable by reading this file.
+    # The format string is parenthesised BEFORE -f. Without it, -f binds tighter than + and
+    # formats only the last fragment, leaving {0} in the output as literal text.
+    Write-Verbose (("Requesting {0} delegated scope(s) on Microsoft Graph Command Line Tools " +
+                    "(appId 14d82eec-204b-4c2f-b7e8-296a70dab67e) in tenant {1}: {2}") -f
+                   @($Scope).Count, $(if ($TenantId) { $TenantId } else { '(default)' }), ($Scope -join ', '))
 
     Connect-MgGraph @connectArgs
 
@@ -107,6 +177,15 @@ function Connect-MsecAdmin {
 
     # See the help: a declined scope is not an error, it is an absence.
     $granted = @($context.Scopes)
+
+    # THE TOKEN CARRIES MORE THAN WAS ASKED FOR, and reading the difference as "msec requested
+    # all this" is the obvious mistake. Entra issues a token holding every scope already
+    # consented for this account on this application, so a long list here reflects consent
+    # history, not this command. Measured on one tenant: three scopes requested, forty-two
+    # returned.
+    Write-Verbose (("Token carries {0} scope(s) - everything previously consented for {1} on this " +
+                    "application, not only the {2} requested above: {3}") -f
+                   $granted.Count, $context.Account, @($Scope).Count, ($granted -join ', '))
     $missing = @($Scope | Where-Object { $_ -notin $granted })
     if ($missing.Count) {
         throw ("Signed in as $($context.Account), but the tenant did not grant: $($missing -join ', '). " +
@@ -122,6 +201,43 @@ function Connect-MsecAdmin {
         throw ("Connect-Msec is reading tenant $($script:MsecSession.TenantId) but this sign-in landed on " +
                "$($context.TenantId). Refusing rather than writing to a different tenant than you are reading. " +
                'Pass -TenantId explicitly if that is genuinely what you intend.')
+    }
+
+    # THE ACCOUNT MATTERS AS MUCH AS THE TENANT, and only this check can tell them apart.
+    # Connect-MgGraph has no -Account parameter, so the browser decides which identity is
+    # used and it prefers whichever one it remembers. With two tenants and two identities
+    # that silently produces the wrong one - and the failure arrives as AADSTS500213, "the
+    # resource tenant's cross-tenant access policy does not allow this user", which reads as
+    # a tenant policy problem and sends you to the wrong team. Warned about by name here.
+    $profile = Get-MsecTenantProfile -TenantId ([string] $context.TenantId)
+
+    # An EXPECTED account is a refusal, not a warning. Being told afterwards that the write
+    # session belongs to the wrong identity is no use once a Set-* has run.
+    $expected = if ($Account) { $Account } else { $null }
+    if ($expected -and $expected -ne [string] $context.Account) {
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+        throw ("Asked to sign in as $expected but the sign-in landed on $($context.Account). " +
+               'Connect-MgGraph cannot choose the account - the browser reuses whichever it ' +
+               'remembers - so the session has been closed rather than left on the wrong identity. ' +
+               'Run Disconnect-MgGraph, then sign in again and pick "Use another account".')
+    }
+
+    # No expectation passed: fall back to warning against what this tenant used last time.
+    if (-not $expected -and $profile -and $profile.AdminAccount -and
+        $profile.AdminAccount -ne [string] $context.Account) {
+        Write-Warning ("Signed in as $($context.Account), but the last admin session for tenant " +
+            "$($context.TenantId) was $($profile.AdminAccount). If that is not deliberate, run " +
+            'Disconnect-MgGraph and sign in again choosing the other account - the browser reuses ' +
+            'whichever it remembers, and a wrong one here fails later as a cross-tenant policy error.')
+    }
+
+    # Remembered so the next sign-in into this tenant can make the comparison above. A UPN,
+    # saved beside the app profile - no token and no credential is stored.
+    if ($profile) {
+        Save-MsecTenantProfile -TenantId ([string] $context.TenantId) `
+            -KeyVaultName $profile.KeyVaultName -ClientId $profile.ClientId `
+            -CertificateName $profile.CertificateName `
+            -AdminAccount ([string] $context.Account)
     }
 
     $script:MsecAdminSession = [PSCustomObject]@{

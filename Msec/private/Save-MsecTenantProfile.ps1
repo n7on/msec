@@ -26,7 +26,16 @@ function Save-MsecTenantProfile {
         [Parameter(Mandatory)] [string] $TenantId,
         [Parameter(Mandatory)] [string] $KeyVaultName,
         [Parameter(Mandatory)] [string] $ClientId,
-        [Parameter()] [string] $CertificateName = 'msec-app'
+        [Parameter()] [string] $CertificateName = 'msec-app',
+
+        # THE ACCOUNT Connect-MsecAdmin SIGNED IN AS, remembered per tenant so a later
+        # sign-in can tell "you picked the wrong account" from "you have no consent". Two
+        # tenants with two identities is where that distinction stops being obvious: a
+        # viedoc user reaching a viedochosting resource fails with AADSTS500213, which
+        # names a cross-tenant policy and says nothing about the account being wrong.
+        #
+        # A UPN, not a secret, and not a credential of any kind.
+        [Parameter()] [string] $AdminAccount
     )
 
     try {
@@ -39,6 +48,10 @@ function Save-MsecTenantProfile {
             KeyVaultName    = $KeyVaultName
             ClientId        = $ClientId
             CertificateName = $CertificateName
+            # Preserved when this save is only about the app session, so recording a
+            # connection does not forget which admin account belongs to this tenant.
+            AdminAccount    = if ($PSBoundParameters.ContainsKey('AdminAccount')) { $AdminAccount }
+                              else { (Get-MsecTenantProfile -TenantId $TenantId).AdminAccount }
             SavedUtc        = [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')
         } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $path -Encoding utf8 -ErrorAction Stop
 
