@@ -18,9 +18,31 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'Msec.psm1') -Force -ErrorAction Stop
     $script:StubbedAz = @()
-    if (-not (Get-Command Get-AzContext -ErrorAction SilentlyContinue)) {
-        Set-Item 'function:global:Get-AzContext' -Value { [CmdletBinding()] param() } -Force
-        $script:StubbedAz += 'Get-AzContext'
+    $stubs = @{
+        'Get-AzContext'   = { [CmdletBinding()] param() }
+        # Mocked by the app-only-vs-write-session test. Not a dependency of msec, and NOT
+        # installed on the CI runners.
+        'Get-MgContext'   = { [CmdletBinding()] param() }
+    }
+    foreach ($c in $stubs.Keys) {
+        # DISCOVERABLE IS NOT USABLE. On the ubuntu and windows runners Get-MgContext RESOLVES
+        # as a command - the module manifest is there - while its backing assembly
+        # (Microsoft.Graph.Authentication.Core) cannot be loaded. A presence check therefore
+        # skips the stub, and Pester's Mock then dies building CommandMetadata:
+        #   "Cannot convert value Get-MgContext to type CommandMetadata"
+        # which points at the mock rather than at the half-installed module behind it. macOS
+        # has the module properly installed, so this passes locally and fails only in CI.
+        # Same probe Mock performs: build the metadata, and stub when that fails.
+        $usable = $false
+        $found  = Get-Command $c -ErrorAction SilentlyContinue
+        if ($found) {
+            try   { $null = [System.Management.Automation.CommandMetadata]::new($found); $usable = $true }
+            catch { $usable = $false }
+        }
+        if (-not $usable) {
+            Set-Item "function:global:$c" -Value $stubs[$c] -Force
+            $script:StubbedAz += $c
+        }
     }
 }
 AfterAll {
