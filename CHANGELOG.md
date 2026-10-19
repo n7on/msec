@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.6.0] - 2026-10-19
 
 ### Added
 - `Save-MsecContext`, `Set-MsecContext`, `Remove-MsecContext` - named contexts, so the Azure
