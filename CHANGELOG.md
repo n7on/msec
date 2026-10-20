@@ -2,6 +2,182 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `Connect-MsecAzure` - signs in to the Azure plane as you, for the commands that read ARM
+  rather than Graph. The module had a way in for the app (`Connect-Msec`) and a way in for your
+  write scopes (`Connect-MsecAdmin`), but nineteen Azure-plane commands depend on the Az
+  context and several told you to go and run `Connect-AzAccount` - a cmdlet whose defaults
+  disagree with this module's.
+
+  IT DEFAULTS TO `-Scope Process`, WHERE `Connect-AzAccount` DEFAULTS TO `CurrentUser`. That is
+  the reason it exists. Az's context autosave writes the active context to
+  `~/.Azure/AzureRmContext.json`, so a sign-in in one shell silently becomes the default for
+  every shell opened afterwards - discovered later, in a different window, pointed at a tenant
+  nobody remembers choosing. Measured on one machine: 52 cached contexts in a 324 KB profile.
+
+  THE CREDENTIAL IS SHARED WHATEVER THE SCOPE. The token goes to the OS credential store - on
+  macOS the keychain, service `Microsoft.Developer.IdentityService`; `~/.Azure/keystore.cache`
+  is 0 bytes. `-Scope` controls the POINTER, not the credential: which tenant and subscription
+  a shell is aimed at, which is the part that decides where a command lands.
+
+  IT NAMES `EnableLoginByWam` WHEN THE macOS BROKER REFUSES THE THREAD. Az 5.x enables the WAM
+  broker by default and it must run on the main thread, which the PowerShell host does not give
+  it. The failure reads "Interactive requests with mac broker enabled must be executed on the
+  main thread on macOS" and never mentions the setting that turns it off. `-UseDeviceCode` is
+  the way in meanwhile.
+
+  `-Environment` TAB-COMPLETES, from `Get-AzEnvironment` rather than a fixed list. A
+  `ValidateSet` would complete just as nicely and then refuse an air-gapped or national cloud
+  registered locally with `Add-AzEnvironment` - which is the case where this command matters
+  most. The completer returns nothing rather than throwing when Az cannot be asked, because a
+  completer that throws makes the shell look broken.
+
+  `-MaxContextPopulation` IS THERE FOR SLOW CLOUDS. After the browser step Az builds a context
+  per subscription it can see - 25 by default, each a round trip - which is why a sovereign
+  sign-in sits for a long time after the account has already been picked. Measured: ~0.08 s per
+  ARM round trip on AzureCloud against ~2.3 s on AzureChinaCloud, 28x. It is deliberately NOT
+  lowered by default, because those populated contexts are what lets `Set-MsecContext` move
+  between clouds without a fresh sign-in. `-Verbose` now times the sign-in so a slow cloud can
+  be told from a hang.
+
+- Bundled query `Law/Waf/Volume` - requests seen, matched and blocked per day per Application
+  Gateway.
+
+  NO REGION FILTER IN THE QUERY. Gateway, ResourceGroup and SubscriptionId are columns, so the
+  caller narrows in PowerShell - `Where-Object Gateway -like '*japan*'`. One workspace collects
+  several gateways across several regions; a region baked in means a file per region and a
+  stale one the day a gateway moves.
+
+  READS AGWFirewallLogs ONLY. During a diagnostic-settings migration BOTH it and the legacy
+  AzureDiagnostics receive events - measured, 35 rows in the new table and 1,844 in the old on
+  the same day - so a union double-counts exactly the migration day, which is the hardest error
+  to notice because it is one day in the middle of a range.
+
+  BLOCKEDSHARE IS AGAINST FIREWALL EVENTS, NOT SITE TRAFFIC, and the header says so because
+  the difference is two orders of magnitude: ~25% of firewall events against ~0.09% of actual
+  requests on the same gateway. Only requests that matched a rule appear in this table at all.
+
+### Changed
+- `Set-MsecContext` gained `-Scope`, defaulting to `Process`, so a switch changes this shell
+  and not every shell opened afterwards.
+
+  THIS WAS THE LAST OF THE THREE SESSIONS STILL LEAKING. The app session dies with the shell
+  and the write session now does too, but the Azure context did not: Az's context autosave is
+  on for the user, so `Set-AzContext` writes the active context to
+  `~/.Azure/AzureRmContext.json` and every new terminal inherits it. Switching to one tenant to
+  check something left every later shell pointed there - found much later, in another window.
+
+  IT APPLIES TO THE AZURE CONTEXT ONLY. `-Scope CurrentUser` does not persist a write session
+  started by `-Admin`; caching a delegated write token on disk is a separate decision from
+  choosing a default subscription, and coupling them would quietly undo the change above.
+
+  Not a breaking change in practice: `Set-MsecContext` has never shipped - it is new in this
+  unreleased version, and the Gallery's published versions stop at 0.4.0.
+
+- `Set-MsecContext` now DISCONNECTS a write session belonging to the tenant you are leaving
+  instead of re-establishing it, so switching contexts is silent. `-Admin` signs back in when
+  you actually intend to write, and a session already on the target tenant and account is left
+  alone.
+
+  IT OPENED A BROWSER ON EVERY SWITCH, and no amount of caching could have prevented it. Az
+  keeps a context per account and `Set-AzContext` selects one, so the Azure half of a switch is
+  free. The Graph SDK has no context store at all - no `Set-MgContext`, no list of cached
+  logins, and no `-Account` or `-LoginHint` on `Connect-MgGraph` (checked on SDK 2.37.0) - so
+  any change of identity must go through an interactive sign-in. Two tenants with two different
+  admin identities therefore meant a browser on every single switch.
+
+  THE WRITE SESSION IS NOW HANDLED LIKE THE WORKLOAD SESSIONS. Exchange, Teams, SharePoint and
+  Purview are already torn down rather than re-pointed, for the same reason: they cannot follow
+  you to another tenant. Leaving one in place is the dangerous case - it would go on accepting
+  writes aimed at the tenant you left.
+
+  `AdminAccount` IS STILL RECORDED, and is load-bearing. `-Admin` passes it to
+  `Connect-MsecAdmin -Account`, which is the only check that catches the browser reusing a
+  remembered identity - without it a sign-in silently lands on the wrong account and fails
+  later as `AADSTS500213`, which reads as a tenant policy problem.
+
+  It still MOVES a session belonging to another tenant, which is quiet now that
+  `Connect-MsecAdmin` persists its token - leaving one behind is the failure this command
+  exists to prevent, since it would go on accepting writes aimed at the tenant you left. When
+  the target context has no admin account recorded it cannot be moved, and that is warned
+  about rather than passed over in silence.
+
+- `Connect-MsecAdmin -ContextScope` keeps its `CurrentUser` default, so the write session
+  persists and a saved context can reuse one that is already authenticated.
+
+  IT WAS BRIEFLY CHANGED TO `Process` DURING DEVELOPMENT AND CHANGED BACK, because the
+  reasoning behind the change was wrong. The goal was that two shells could hold sessions in
+  two different tenants at once, without one re-pointing the other - and persisting the
+  CREDENTIAL was mistaken for sharing the POINTER. They are not the same thing: `Get-MgContext`
+  is per process and `Connect-MsecAdmin` names the tenant and account explicitly, so a cached
+  token never decides which tenant a given shell is aimed at.
+
+  THE POINTER THAT GENUINELY LEAKED WAS THE AZURE CONTEXT, and that is what is now
+  process-scoped - in `Set-MsecContext -Scope` and `Connect-MsecAzure -Scope`. Scoping the
+  Graph token instead fixed nothing and cost a browser prompt on every context switch that
+  moved a write session.
+
+  `-ContextScope Process` is still there for "a person is at the keyboard now", at that price.
+
+### Fixed
+- `Connect-MsecAdmin` no longer runs `Disconnect-MgGraph` when it refuses a sign-in, so a
+  refusal stops costing you the cached credential.
+
+  IT MADE "SIGN IN ONCE PER ACCOUNT" IMPOSSIBLE. The SDK's own words: "you'll remain signed in
+  until you invoke Disconnect-MgGraph... sign-in persists across PowerShell sessions because
+  Microsoft Graph PowerShell securely caches the token." Purging on every refused sign-in threw
+  that away - so with two tenants using two different identities, each switch tore down the
+  credential it had just created and the next one started from an empty cache. Reported from a
+  live session as "I need to auth every time I change context".
+
+  THE REFUSAL ITSELF IS UNCHANGED, and writes are no less safe. `Assert-MsecAdminSession`
+  requires `$script:MsecAdminSession`, which is cleared and never set on a refused path, so no
+  `Set-Msec*` command can run against the wrong tenant or identity. Closing the SDK's session
+  was never what made that safe. The guidance that used to say "run Disconnect-MgGraph" now
+  says to pick "Use another account" instead, and mentions disconnecting only as a last resort
+  when the browser will not offer the chooser.
+- `Set-MsecContext` could not switch between contexts in different Azure clouds, which is the
+  only way to reach a sovereign tenant. Switching from a China context to a commercial one
+  failed with `Please provide a valid tenant or a valid subscription` - while the target
+  context sat in Az's own cache, signed in and fully usable.
+
+  `Set-AzContext -Subscription -Tenant` RESOLVES THE SUBSCRIPTION INSIDE THE CURRENT ACCOUNT.
+  Azure needs a separate sign-in per cloud, so an account in one cloud cannot see a tenant in
+  another, and Az never consults the cached context that already can. It now prefers a cached
+  context matching the subscription and tenant and selects that, which carries its own account
+  and environment and therefore crosses clouds.
+
+  When the switch still fails, the error NAMES BOTH CLOUDS and the sign-in needed, because the
+  Az message never mentions the cloud and that is the entire explanation. `Save-MsecContext`
+  records the cloud for this; contexts saved before it did have none, and say nothing rather
+  than guessing.
+
+- Scrubbed two real organisation names from the help and an inline comment. This repo is
+  public; examples use `contoso`.
+
+- `Connect-MsecAdmin` always signed in to the commercial cloud, so it could not reach a
+  sovereign tenant at all. `Connect-MgGraph` defaults to `Global`, whose authority is
+  login.microsoftonline.com, and a China tenant id does not resolve there.
+
+  THE SYMPTOM CARRIED NO INFORMATION, which is why this is worth writing down: the sign-in was
+  rejected before any consent screen and the whole message was
+  `InteractiveBrowserCredential authentication failed:` with nothing after the colon - no cloud
+  named, no tenant named, nothing to suggest the cloud was the problem rather than the account,
+  the scopes or the browser.
+
+  The cloud now comes from the read session's Graph endpoint, matched on the endpoint rather
+  than the name - the SDK calls it `China` where Az calls it `AzureChinaCloud`. `Connect-Msec`
+  and `Connect-MsecGraphSdk` were already cloud-aware; `Connect-MsecAdmin` was the one that was
+  not, and the matching rule now lives in one private helper so they cannot drift apart. With
+  no read session the commercial cloud is still assumed, silently, since there is no better
+  answer to be had.
+
+- `Save-MsecContext` told you to run `Set-MsecContext` when there was no Azure context to save,
+  which is circular - you cannot set a context you have not saved yet. It now names
+  `Connect-AzAccount` and `Set-AzContext`. Left over from removing `Select-MsecAzureContext`.
+
 ## [0.6.0] - 2026-10-19
 
 ### Added

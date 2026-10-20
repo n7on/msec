@@ -122,49 +122,90 @@ is the bootstrap), `Connect-MsecTeams -AsCurrentUser` selects between two modes 
 the app's Graph session, because `Get-AzADUser` on a permissionless ARM connection returns blank
 names rather than failing, and `Set-MsecContext` moves both on purpose - see below.
 
-### Switching tenant or subscription
+### Named contexts: switching tenant, subscription or cloud
 
-Two identities means two things to move, and moving one used to leave the other behind: switch the
-Az context to another tenant and every Graph or Defender call kept answering for the tenant you
-just left. Nothing failed, which is what made it dangerous.
+A msec session is really four sessions - the Azure context, the msec app session, the write
+session and whatever workload sessions are open. Moving one used to leave the others behind:
+switch the Az context to another tenant and every Graph or Defender call kept answering for the
+tenant you just left. Nothing failed, which is what made it dangerous.
 
-`Set-MsecContext` moves all of them. Name a context once with `Save-MsecContext` and every
-later switch is one command - the Azure context, the app session and the write session land
-together, and the workload sessions that cannot follow a tenant change are disconnected rather
-than left answering for the tenant you left:
+A named context moves them together.
+
+#### Once per tenant
 
 ```powershell
-# Once per tenant, from a context you are already in.
-Connect-Msec -KeyVaultName kv-prod
-Connect-MsecAdmin
-Save-MsecContext prod
-
-# Then forever after. Tab-completes the saved names.
-Set-MsecContext prod -Admin
-
-# Where am I? One row per session surface, with whether each agrees.
-Get-MsecContext
+Connect-MsecAzure -Subscription 'PROD'      # you, on the Azure plane (ARM)
+Connect-Msec -KeyVaultName kv-prod          # the app, read-only, cert in Key Vault
+Connect-MsecAdmin                           # you, delegated write scopes (optional)
+Save-MsecContext prod                       # remember all of it under a name
 ```
 
-`Connect-Msec` still saves a profile per tenant - vault name, client id, certificate name,
-and the admin account last used - which is where `Save-MsecContext` gets the certificate name
-and `Connect-MsecAdmin` gets the account it checks your sign-in against.
+`Save-MsecContext` reads the **live** session, so connect first - it saves nothing you have not
+established. It records the subscription, tenant, cloud, vault, client id, certificate name and
+the admin account; no tokens and no secrets. For a sovereign cloud, add
+`-Environment AzureChinaCloud` to `Connect-MsecAzure`.
 
-Three things worth knowing:
+#### Every time after
 
-- **It only reconnects when the tenant actually changes.** Switching between two subscriptions in
-  the same tenant costs nothing.
+```powershell
+Set-MsecContext prod            # Azure + app session. Silent.
+Set-MsecContext prod -Admin     # also sign in to write. Opens a browser.
+Get-MsecContext                 # one row per session surface, and whether they agree
+Get-MsecContext -List           # the saved contexts
+```
+
+`Name` tab-completes, showing each context's subscription and vault.
+
+#### Each shell has its own context
+
+`Set-MsecContext` and `Connect-MsecAzure` default to `-Scope Process`, so a switch changes the
+shell you ran it in and nothing else. Az's context autosave is on for the user, so without this
+a switch would quietly become the default for every terminal you opened afterwards - found much
+later, in another window, pointed at a tenant you did not choose. Pass `-Scope CurrentUser` when
+you do want it to stick.
+
+The credential is shared either way: tokens live in the OS credential store, so signing in once
+per account covers every shell. What is per-shell is *which* account and subscription are
+selected.
+
+#### The write session is dropped rather than carried
+
+Switching away disconnects the write session, and `-Admin` signs back in when you actually
+intend to write. That is a Graph SDK limitation, not a choice:
+
+| | Az (ARM) | Microsoft.Graph |
+| --- | --- | --- |
+| List cached logins | `Get-AzContext -ListAvailable` | nothing |
+| Select one | `Set-AzContext` | nothing |
+| Name the account | `-AccountId` | no `-Account`, no `-LoginHint` |
+
+Az keeps a context per account and selects between them without authenticating, which is why
+the Azure half of a switch is free. The Graph SDK has no context store at all, so any change of
+identity goes through an interactive `Connect-MgGraph`. Rather than open a browser on every
+switch, msec drops the session - the same treatment the Exchange, Teams, SharePoint and Purview
+sessions already get, and for the same reason: they cannot follow a tenant change, and one left
+in place keeps answering for the tenant you left.
+
+If every context uses the **same** admin account, that account stays cached and `-Admin` is
+quiet after the first sign-in. Two different identities means a browser each time, and the
+recorded `AdminAccount` is what makes that safe - `Connect-MsecAdmin -Account` refuses a sign-in
+that lands on whichever identity the browser happened to remember, instead of letting it fail
+later as `AADSTS500213`, which reads as a tenant policy problem and sends you to the wrong team.
+
+#### Worth knowing
+
+- **Same tenant, different subscription costs nothing** - the app session is only reconnected
+  when the tenant actually changes.
+- **A failed reconnect does not undo the switch.** The context change is what was asked for and
+  it stands; losing a session warns rather than throws.
+- **Crossing clouds works** if the target context was saved while signed in to that cloud.
+  `Set-MsecContext` selects the cached Azure context rather than resolving the subscription
+  inside the current account, which an account in another cloud cannot see.
 - **A tenant with no saved profile still switches**, and warns that the app session is now
-  misaligned. Run `Connect-Msec` once for that tenant and later switches handle themselves.
-- **A failed reconnect does not fail the switch.** The context change is what was asked for and it
-  stands; losing the convenience warns rather than throws.
+  misaligned. Run `Connect-Msec` once for that tenant.
+- `Remove-MsecContext` forgets a name. It disconnects nothing.
 
-Use `-NoConnect` to move the Az context and deliberately leave the app session where it is.
-
-The Exchange and Purview sessions realign too, but lazily rather than here: they are checked
-against the current tenant on next use, and a session belonging to the previous tenant is closed
-and reopened rather than silently reused.
-
+Contexts live in `contexts.json` under the msec cache root (`MSEC_CACHE_DIR` overrides it).
 
 ### Exchange Online, SharePoint Online, Teams
 
@@ -288,6 +329,7 @@ answer, and an empty result with one as unread.
 - [Disconnect-Msec](./docs/commands/Disconnect-Msec.md) - Clear the session and its cached tokens
 - [Set-MsecContext](./docs/commands/Set-MsecContext.md) - Switch the Azure context, the app session and the write session together, by name
 - [Connect-MsecAdmin](./docs/commands/Connect-MsecAdmin.md) - Sign in AS YOU with delegated write scopes, for the commands that change something
+- [Connect-MsecAzure](./docs/commands/Connect-MsecAzure.md) - Sign in AS YOU to the Azure plane, for the commands that read ARM rather than Graph; shell-local by default
 - [Connect-MsecGraphSdk](./docs/commands/Connect-MsecGraphSdk.md) - Hand the msec session's token to the Microsoft.Graph SDK, so Get-Mg* runs as the msec app
 - [Connect-MsecExchangeOnline](./docs/commands/Connect-MsecExchangeOnline.md) - Same for ExchangeOnlineManagement
 - [Connect-MsecSharePointOnline](./docs/commands/Connect-MsecSharePointOnline.md) - Same for PnP.PowerShell, with the token audience derived from the site host
