@@ -163,7 +163,7 @@ Describe 'Get-MsecKeyVaultCertificate' {
     It 'throws a clear error without an Az context' {
         InModuleScope Msec {
             Mock Get-AzContext -MockWith { $null }
-            { Get-MsecKeyVaultCertificate } | Should -Throw '*Connect-AzAccount*'
+            { Get-MsecKeyVaultCertificate } | Should -Throw '*Connect-MsecAzure*'
         }
     }
 }

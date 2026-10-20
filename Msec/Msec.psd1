@@ -41,6 +41,7 @@
         'Connect-Msec',
         'Disconnect-Msec',
         'Connect-MsecAdmin',
+        'Connect-MsecAzure',
         'Connect-MsecGraphSdk',
         'Connect-MsecExchangeOnline',
         'Connect-MsecSharePointOnline',

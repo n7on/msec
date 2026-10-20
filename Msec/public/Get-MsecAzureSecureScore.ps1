@@ -63,7 +63,7 @@ function Get-MsecAzureSecureScore {
     # Caller's Az.Accounts identity - NOT the msec app. Match the auth flow
     # used by Search-MsecAzureResourceGraph and Invoke-MsecAzureVMScript.
     if (-not (Get-AzContext -ErrorAction SilentlyContinue)) {
-        throw 'No Azure context. Run Connect-AzAccount before Get-MsecAzureSecureScore.'
+        throw 'No Azure context. Run Connect-MsecAzure before Get-MsecAzureSecureScore.'
     }
 
     # Default to every accessible subscription in the current tenant (same convention as

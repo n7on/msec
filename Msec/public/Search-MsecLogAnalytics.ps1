@@ -265,7 +265,7 @@ function Search-MsecLogAnalytics {
     )
 
     if (-not (Get-AzContext -ErrorAction SilentlyContinue)) {
-        throw 'No Azure context. Run Connect-AzAccount before Search-MsecLogAnalytics.'
+        throw 'No Azure context. Run Connect-MsecAzure before Search-MsecLogAnalytics.'
     }
 
     # Exactly one source. Both would be ambiguous; neither leaves nothing to run.
