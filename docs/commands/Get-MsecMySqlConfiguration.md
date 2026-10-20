@@ -111,7 +111,7 @@ actually change.
 
 ### -ServerName
 Only servers whose name matches this wildcard pattern, e.g.
-'viedoc-*'.
+'contoso-*'.
 
 ```yaml
 Type: String

@@ -48,7 +48,7 @@ function Get-MsecMySqlConfiguration {
         name saves nothing; narrowing by -ServerName does.
 
     .PARAMETER ServerName
-        Only servers whose name matches this wildcard pattern, e.g. 'viedoc-*'.
+        Only servers whose name matches this wildcard pattern, e.g. 'contoso-*'.
 
     .PARAMETER Name
         Only parameters matching these wildcard patterns, e.g. 'tls_*', '*encrypt*'. Filtered
