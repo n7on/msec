@@ -1,0 +1,51 @@
+// One row per day per Application Gateway: how many requests the WAF saw, how many it
+// matched a rule on, and how many it blocked. The numbers you put in a report.
+//
+// Loaded by Search-MsecLogAnalytics -Subject Waf -Name Volume -WorkspaceName <ws>.
+//
+// NO REGION FILTER HERE, ON PURPOSE. Gateway, ResourceGroup and SubscriptionId come back as
+// columns so the caller narrows in PowerShell - the same choice TopClients.kql makes. One
+// workspace commonly collects several gateways across several regions, and a region baked
+// into the query means a new file per region and a stale one the day a gateway moves:
+//   Search-MsecLogAnalytics -Subject Waf -Name Volume -WorkspaceName <ws> -Days 30 |
+//       Where-Object Gateway -like '*japan*' |
+//       Measure-Object Blocked -Sum
+//
+// READS AGWFirewallLogs ONLY, AND NOT THE LEGACY AzureDiagnostics PATH. Diagnostic settings
+// move from AzureDiagnostics to the resource-specific table, and during the cutover BOTH
+// receive events - measured on one gateway, 35 rows in the new table and 1,844 in the old on
+// the same day. Reading both would double-count exactly the day the migration happened, which
+// is the hardest kind of error to notice because it affects one day in the middle of a range.
+// A workspace still on the legacy table gets nothing here rather than something wrong, and
+// All.kql reads both for the period where that is what you want.
+//
+// BLOCKED AND MATCHED ARE NOT THE SAME COUNT, AND BLOCKED IS THE SMALLER ONE. CRS is anomaly
+// scoring: several rules Match and contribute to a score, then one rule - 949110, Inbound
+// Anomaly Score Exceeded - Blocks once the total crosses the threshold. So a single blocked
+// request usually produces one Blocked row and several Matched rows, and summing both as
+// "events" overstates the traffic. Blocked is the figure that means "a request was stopped".
+//
+// BLOCKEDSHARE IS AGAINST FIREWALL EVENTS, NOT AGAINST SITE TRAFFIC. Only requests that
+// matched at least one rule appear in this table at all, so the denominator here is "requests
+// the WAF had an opinion about", not every request served. For blocked-as-a-fraction-of-all-
+// traffic you need the access log - measured on one gateway, ~2,240 blocked against ~2.5M
+// requests a day is 0.09%, where BlockedShare in this table reads about 25%. Quoting the
+// wrong one overstates the attack rate by two orders of magnitude.
+AGWFirewallLogs
+| extend ResId = tolower(tostring(_ResourceId))
+| extend Gateway        = tostring(extract(@"/applicationgateways/([^/]+)$", 1, ResId)),
+         ResourceGroup  = tostring(extract(@"/resourcegroups/([^/]+)/", 1, ResId)),
+         SubscriptionId = tostring(extract(@"/subscriptions/([^/]+)/", 1, ResId))
+| summarize Total       = count(),
+            Blocked     = countif(Action == "Blocked"),
+            Matched     = countif(Action == "Matched"),
+            Clients     = dcount(ClientIp),
+            BlockedFrom = dcountif(ClientIp, Action == "Blocked"),
+            Hosts       = dcount(Hostname)
+        by Day = format_datetime(bin(TimeGenerated, 1d), "yyyy-MM-dd"),
+           Gateway, ResourceGroup, SubscriptionId
+// Against firewall events only - see the header before quoting it.
+| extend BlockedShare = round(todouble(Blocked) / todouble(Total) * 100, 1)
+| project Day, Gateway, ResourceGroup, Blocked, Matched, Total, BlockedShare,
+          Clients, BlockedFrom, Hosts, SubscriptionId
+| order by Day asc, Blocked desc

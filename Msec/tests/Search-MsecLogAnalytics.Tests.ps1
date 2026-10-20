@@ -188,6 +188,29 @@ Describe 'Kql/Law bundled queries' {
         $offenders | Should -BeNullOrEmpty
     }
 
+    It 'keeps Waf/Volume off the legacy table, so the migration day is not double counted' {
+        # Diagnostic settings move from AzureDiagnostics to the resource-specific table, and
+        # during the cutover BOTH receive events - measured, 35 rows in the new table and 1,844
+        # in the old on the same day. A union would double-count exactly the day of the
+        # migration, which is the hardest error to spot because it is one day mid-range.
+        # Comments stripped first: the header EXPLAINS why the legacy table is excluded, so
+        # testing the whole file finds the word it is warning about and fails on the warning.
+        $volume = Get-Content -LiteralPath (Join-Path $script:LawRoot 'Waf/Volume.kql') -Raw
+        $code   = (($volume -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+        $code | Should -Not -Match 'AzureDiagnostics'
+        $code | Should -Match 'AGWFirewallLogs'
+    }
+
+    It 'leaves region filtering to the caller, exposing the gateway instead' {
+        # One workspace collects several gateways across several regions. A region baked into
+        # the query means a file per region and a stale one the day a gateway moves.
+        $volume = Get-Content -LiteralPath (Join-Path $script:LawRoot 'Waf/Volume.kql') -Raw
+        $code   = (($volume -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+        $code | Should -Match 'Gateway'
+        # No hardcoded region or tenant names in the executable part.
+        $code | Should -Not -Match '(?i)japan|france|usa|viedoc'
+    }
+
     It 'reads both App Gateway log modes and the GUID-suffixed transaction id' {
         # A per-gateway diagnostic setting decides whether firewall logs land in AzureDiagnostics
         # or AGWFirewallLogs; reading one means a setting change silently empties the report.
