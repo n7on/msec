@@ -39,6 +39,25 @@ BeforeAll {
             $script:StubbedAz += $c
         }
     }
+
+    # DISCOVERABLE IS NOT USABLE, and a presence check is not enough for the Graph SDK. On the
+    # ubuntu and macos runners Disconnect-MgGraph RESOLVES while its backing assembly
+    # (Microsoft.Graph.Authentication.Core) cannot be loaded, so a presence check skips the
+    # stub and Pester's Mock then dies building CommandMetadata -
+    #   "Cannot convert value Disconnect-MgGraph to type CommandMetadata"
+    # which points at the mock rather than at the half-installed module behind it. Same probe
+    # Mock itself performs: build the metadata, and stub when that fails. Identical to the one
+    # in Connect-MsecAdmin.Tests.ps1 and Get-MsecContext.Tests.ps1.
+    $usable = $false
+    $found  = Get-Command 'Disconnect-MgGraph' -ErrorAction SilentlyContinue
+    if ($found) {
+        try   { $null = [System.Management.Automation.CommandMetadata]::new($found); $usable = $true }
+        catch { $usable = $false }
+    }
+    if (-not $usable) {
+        Set-Item 'function:global:Disconnect-MgGraph' -Value { [CmdletBinding()] param() } -Force
+        $script:StubbedAz += 'Disconnect-MgGraph'
+    }
 }
 AfterAll {
     Remove-Item $script:CacheDir -Recurse -Force -ErrorAction SilentlyContinue
