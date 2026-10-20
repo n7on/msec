@@ -17,8 +17,8 @@ function Save-MsecContext {
         names nothing about accounts. Recording the account here lets Set-MsecContext refuse a
         mismatch instead of discovering it afterwards.
 
-        NO SECRET IS STORED. Subscription, tenant, vault name, client id, certificate name and
-        a UPN - the same things you would type on a command line. msec signs with a key that
+        NO SECRET IS STORED. Subscription, tenant, cloud, vault name, client id, certificate
+        name and a UPN - the same things you would type on a command line. msec signs with a key that
         never leaves Key Vault, so there is nothing here worth having.
 
         Saved at the cache ROOT, not under a tenant folder: a named context exists in order to
@@ -64,7 +64,7 @@ function Save-MsecContext {
 
     $az = Get-AzContext -ErrorAction SilentlyContinue
     if (-not $az) {
-        throw 'No Azure context to save. Run Connect-AzAccount and Set-MsecContext first - a context without a subscription cannot be switched back to.'
+        throw 'No Azure context to save. Run Connect-AzAccount, then Set-AzContext -Subscription <name> to select the one you want saved - a context without a subscription cannot be switched back to.'
     }
     if (-not $script:MsecSession) {
         throw 'No msec app session to save. Run Connect-Msec -KeyVaultName <vault> first, so the saved context knows which vault to reconnect with.'
@@ -95,6 +95,9 @@ function Save-MsecContext {
         SubscriptionId  = [string] $az.Subscription.Id
         Subscription    = [string] $az.Subscription.Name
         AzAccount       = [string] $az.Account.Id
+        # THE CLOUD, because Azure needs a separate sign-in per cloud and switching between
+        # two contexts in different ones fails with an Az error that never mentions the cloud.
+        Environment     = [string] $az.Environment.Name
         TenantId        = [string] $script:MsecSession.TenantId
         KeyVaultName    = [string] $script:MsecSession.KeyVaultName
         ClientId        = [string] $script:MsecSession.ClientId

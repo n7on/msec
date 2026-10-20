@@ -14,8 +14,7 @@ write session, together, by name.
 ## SYNTAX
 
 ```
-Set-MsecContext [-Name] <String> [-Admin] [-KeepWorkload] [-WhatIf]
- [-Confirm] [<CommonParameters>]
+Set-MsecContext [-Name] <String> [-Admin] [-KeepWorkload] [-Scope <String>] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -26,6 +25,15 @@ idea of which tenant they are on.
 Moving one and forgetting another leaves commands
 reading one tenant and writing to a different one, which fails silently rather than
 loudly.
+
+THE SWITCH IS SHELL-LOCAL, UNLIKE Set-AzContext's OWN DEFAULT.
+Az's context autosave
+writes the active context to ~/.Azure/AzureRmContext.json, so switching here would
+otherwise become the default for every shell opened afterwards - discovered later, in a
+different window, aimed at a tenant nobody remembers choosing.
+The app session and the
+write session already die with the shell; the Az context was the one that did not.
+-Scope CurrentUser asks for the old behaviour.
 
 IT DISCONNECTS WHAT IT CANNOT REALIGN.
 Exchange, Teams, SharePoint and Purview sessions
@@ -42,8 +50,24 @@ IT WILL NOT START A WRITE SESSION YOU DID NOT HAVE, unless -Admin is passed.
 Signing in
 is interactive, and an interactive prompt in the middle of a context switch is a
 surprise.
-An EXISTING write session is always moved, because leaving it behind is the
-dangerous case.
+
+A WRITE SESSION FOR ANOTHER TENANT IS DISCONNECTED, NOT CARRIED OVER.
+Leaving it is
+the dangerous case - it would go on accepting writes aimed at the tenant you just left.
+Re-establishing it is not possible without a browser, so it is dropped and -Admin signs
+back in when you actually intend to write.
+A session already on the right tenant and
+account is left alone entirely.
+
+THE REASON IT CANNOT BE CARRIED OVER IS THE GRAPH SDK, not caching.
+Az keeps a context
+per account and Set-AzContext selects one, so the Azure half of a switch is free.
+The
+Graph SDK has no context store at all - no Set-MgContext, no list of cached logins, and
+no -Account or -LoginHint on Connect-MgGraph (checked on SDK 2.37.0) - so any change of
+identity must go through an interactive sign-in.
+Contexts that share one account are
+the exception: there the session stays valid and nothing is dropped.
 
 THE ADMIN ACCOUNT IS ASSERTED, NOT CHOSEN.
 Connect-MgGraph has no way to pick an
@@ -119,6 +143,35 @@ Aliases:
 Required: False
 Position: Named
 Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Scope
+Where the switch applies.
+'Process' (default) changes this shell only.
+'CurrentUser'
+writes it to the shared Az profile, making it the default for every new shell.
+
+The default is deliberately NOT Az's.
+Context autosave is on for the user, so a switch
+would otherwise follow you into every terminal you open afterwards.
+
+IT APPLIES TO THE AZURE CONTEXT ONLY.
+'CurrentUser' does NOT persist a write session
+started by -Admin - that one keeps its own Process default, because caching a delegated
+write token on disk is a separate decision from choosing a default subscription.
+Pass
+Connect-MsecAdmin -ContextScope CurrentUser yourself if you want that too.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: Process
 Accept pipeline input: False
 Accept wildcard characters: False
 ```

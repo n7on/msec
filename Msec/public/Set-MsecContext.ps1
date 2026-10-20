@@ -11,6 +11,13 @@ function Set-MsecContext {
         reading one tenant and writing to a different one, which fails silently rather than
         loudly.
 
+        THE SWITCH IS SHELL-LOCAL, UNLIKE Set-AzContext's OWN DEFAULT. Az's context autosave
+        writes the active context to ~/.Azure/AzureRmContext.json, so switching here would
+        otherwise become the default for every shell opened afterwards - discovered later, in a
+        different window, aimed at a tenant nobody remembers choosing. The app session and the
+        write session already die with the shell; the Az context was the one that did not.
+        -Scope CurrentUser asks for the old behaviour.
+
         IT DISCONNECTS WHAT IT CANNOT REALIGN. Exchange, Teams, SharePoint and Purview sessions
         live inside other modules and cannot be re-pointed at a new tenant - only torn down and
         built again. Left alone they KEEP WORKING against the tenant you just left, returning
@@ -20,8 +27,20 @@ function Set-MsecContext {
 
         IT WILL NOT START A WRITE SESSION YOU DID NOT HAVE, unless -Admin is passed. Signing in
         is interactive, and an interactive prompt in the middle of a context switch is a
-        surprise. An EXISTING write session is always moved, because leaving it behind is the
-        dangerous case.
+        surprise.
+
+        A WRITE SESSION FOR ANOTHER TENANT IS DISCONNECTED, NOT CARRIED OVER. Leaving it is
+        the dangerous case - it would go on accepting writes aimed at the tenant you just left.
+        Re-establishing it is not possible without a browser, so it is dropped and -Admin signs
+        back in when you actually intend to write. A session already on the right tenant and
+        account is left alone entirely.
+
+        THE REASON IT CANNOT BE CARRIED OVER IS THE GRAPH SDK, not caching. Az keeps a context
+        per account and Set-AzContext selects one, so the Azure half of a switch is free. The
+        Graph SDK has no context store at all - no Set-MgContext, no list of cached logins, and
+        no -Account or -LoginHint on Connect-MgGraph (checked on SDK 2.37.0) - so any change of
+        identity must go through an interactive sign-in. Contexts that share one account are
+        the exception: there the session stays valid and nothing is dropped.
 
         THE ADMIN ACCOUNT IS ASSERTED, NOT CHOSEN. Connect-MgGraph has no way to pick an
         identity - the browser reuses whichever it remembers - so the saved account is passed
@@ -37,6 +56,18 @@ function Set-MsecContext {
     .PARAMETER Admin
         Also establish the write session, signing in if there is not one already. Without it,
         an existing write session is moved but a missing one is left missing.
+
+    .PARAMETER Scope
+        Where the switch applies. 'Process' (default) changes this shell only. 'CurrentUser'
+        writes it to the shared Az profile, making it the default for every new shell.
+
+        The default is deliberately NOT Az's. Context autosave is on for the user, so a switch
+        would otherwise follow you into every terminal you open afterwards.
+
+        IT APPLIES TO THE AZURE CONTEXT ONLY. 'CurrentUser' does NOT persist a write session
+        started by -Admin - that one keeps its own Process default, because caching a delegated
+        write token on disk is a separate decision from choosing a default subscription. Pass
+        Connect-MsecAdmin -ContextScope CurrentUser yourself if you want that too.
 
     .PARAMETER KeepWorkload
         Leave Exchange, Teams, SharePoint and Purview sessions alone. Only sensible when the
@@ -73,7 +104,16 @@ function Set-MsecContext {
 
         [switch] $Admin,
 
-        [switch] $KeepWorkload
+        [switch] $KeepWorkload,
+
+        # SHELL-LOCAL BY DEFAULT, matching Connect-MsecAzure and Connect-MsecAdmin. Az's
+        # context autosave writes the active context to ~/.Azure/AzureRmContext.json, so
+        # switching here would otherwise re-point every shell opened afterwards - found later,
+        # in another window, aimed at a tenant nobody remembers choosing. The app session and
+        # the write session already die with the shell; this is the third of the three that
+        # did not.
+        [ValidateSet('Process', 'CurrentUser')]
+        [string] $Scope = 'Process'
     )
 
     $store = Read-MsecContextStore
@@ -107,12 +147,39 @@ function Set-MsecContext {
     }
 
     # ---- 2. Azure context ---------------------------------------------------------------
+    # PREFER A CONTEXT Az HAS ALREADY CACHED, because -Subscription/-Tenant resolves the
+    # subscription INSIDE THE CURRENT ACCOUNT. Signed in to one cloud, switching to a context
+    # in another fails with "Please provide a valid tenant or a valid subscription" even though
+    # the target context is sitting in the cache, fully usable - Az just never looked at it.
+    # A cached context carries its own account and environment, so selecting it crosses clouds.
+    $cached = @(Get-AzContext -ListAvailable -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Subscription -and $_.Subscription.Id -eq $c.SubscriptionId -and
+                                   $_.Tenant -and $_.Tenant.Id -eq $c.TenantId })
+
     try {
-        $null = Set-AzContext -Subscription $c.SubscriptionId -Tenant $c.TenantId -ErrorAction Stop
+        if ($cached.Count -ge 1) {
+            if ($cached.Count -gt 1) {
+                Write-Verbose ("{0} cached Azure contexts match this subscription and tenant; using the one for account {1}." -f
+                               $cached.Count, $cached[0].Account.Id)
+            }
+            $null = Set-AzContext -Context $cached[0] -Scope $Scope -ErrorAction Stop
+        }
+        else {
+            $null = Set-AzContext -Subscription $c.SubscriptionId -Tenant $c.TenantId -Scope $Scope -ErrorAction Stop
+        }
     }
     catch {
+        # NAME THE CLOUD WHEN IT CHANGED, since that is the whole explanation and the Az error
+        # does not mention it. Contexts saved before Environment was recorded have none, and
+        # guessing one would be worse than saying nothing.
+        $hint = ''
+        $now  = (Get-AzContext -ErrorAction SilentlyContinue)
+        if ($c.Environment -and $now -and $now.Environment -and $now.Environment.Name -ne $c.Environment) {
+            $hint = (" This context is in the {0} cloud and you are signed in to {1}; Azure needs a separate " +
+                     "sign-in per cloud. Run: Connect-AzAccount -Environment {0}") -f $c.Environment, $now.Environment.Name
+        }
         throw ("Could not switch the Azure context to subscription $($c.Subscription) ($($c.SubscriptionId)) " +
-               "in tenant $($c.TenantId): $($_.Exception.Message) Nothing else was changed.")
+               "in tenant $($c.TenantId): $($_.Exception.Message)$hint Nothing else was changed.")
     }
 
     # ---- 3. app session ------------------------------------------------------------------
@@ -131,13 +198,34 @@ function Set-MsecContext {
     }
 
     # ---- 4. write session ----------------------------------------------------------------
-    # Moved when one already exists; started only on request. See the help.
-    $wantAdmin = $Admin -or [bool] $script:MsecAdminSession
-    if ($wantAdmin -and -not $c.AdminAccount) {
-        Write-Warning ("Context '$Name' has no admin account recorded, so the write session was not established. " +
+    # STARTED ONLY ON REQUEST, AND OTHERWISE DISCONNECTED. Re-establishing it on every switch
+    # is not possible without a browser: the Graph SDK has no context store and no way to name
+    # a cached identity - no Set-MgContext, no -Account, no -LoginHint (SDK 2.37.0) - so a
+    # change of identity always goes through an interactive Connect-MgGraph. Az has
+    # Get-AzContext -ListAvailable and Set-AzContext and therefore switches for free; Graph has
+    # neither. So switching is kept silent and the write session is dropped, exactly as the
+    # Exchange, Teams, SharePoint and Purview sessions are. Pass -Admin on the switch where you
+    # actually intend to write.
+    $adminSession = $script:MsecAdminSession
+    $stillValid = $adminSession -and $adminSession.TenantId -eq $c.TenantId -and
+                  ((-not $c.AdminAccount) -or $adminSession.Account -eq $c.AdminAccount)
+
+    if ($stillValid) {
+        # Same tenant and same account: as good after the switch as before it, so nothing to do.
+        Write-Verbose "Write session is already $($adminSession.Account) in this tenant; left alone."
+    }
+    elseif ($Admin -and -not $c.AdminAccount) {
+        Write-Warning ("Context '$Name' has no admin account recorded, so no write session was established. " +
                        'Connect-MsecAdmin once and re-run Save-MsecContext to record it.')
     }
-    elseif ($wantAdmin) {
+    elseif ($Admin) {
+        # A BROWSER IS EXPECTED HERE when the identity changes, and -Admin is the request for
+        # it. The account is passed so a sign-in landing on the identity the browser happens to
+        # remember is REFUSED rather than silently writing as the wrong person.
+        if ($adminSession -and $adminSession.Account -and $adminSession.Account -ne $c.AdminAccount) {
+            Write-Verbose ("Signing in as $($c.AdminAccount); the previous session was " +
+                           "$($adminSession.Account), and a different identity cannot reuse a cached token.")
+        }
         try {
             Connect-MsecAdmin -TenantId $c.TenantId -Account $c.AdminAccount | Out-Null
         }
@@ -145,6 +233,18 @@ function Set-MsecContext {
             Write-Warning ("Switched to '$Name', but the write session did not establish as $($c.AdminAccount): " +
                            "$($_.Exception.Message) Set-Msec* commands will not work until Connect-MsecAdmin succeeds.")
         }
+    }
+    elseif ($adminSession) {
+        # DROPPED, because it now belongs to the tenant you just left and would go on accepting
+        # writes aimed at it. Disconnect-MgGraph rather than just clearing msec's own variable,
+        # so "no write session" means it everywhere and not only to this module.
+        if (Get-Command Disconnect-MgGraph -ErrorAction SilentlyContinue) {
+            try { Disconnect-MgGraph -ErrorAction Stop | Out-Null }
+            catch { Write-Verbose "Nothing to disconnect: $($_.Exception.Message)" }
+        }
+        $script:MsecAdminSession = $null
+        Write-Warning ("The write session as $($adminSession.Account) belonged to the tenant you just left and " +
+                       "has been disconnected. Run Set-MsecContext '$Name' -Admin when you need to write here.")
     }
 
     Get-MsecContext

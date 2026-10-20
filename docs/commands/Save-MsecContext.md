@@ -36,8 +36,8 @@ Recording the account here lets Set-MsecContext refuse a
 mismatch instead of discovering it afterwards.
 
 NO SECRET IS STORED.
-Subscription, tenant, vault name, client id, certificate name and
-a UPN - the same things you would type on a command line.
+Subscription, tenant, cloud, vault name, client id, certificate
+name and a UPN - the same things you would type on a command line.
 msec signs with a key that
 never leaves Key Vault, so there is nothing here worth having.
 
