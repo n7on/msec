@@ -178,6 +178,8 @@ All notable changes to this project will be documented in this file.
   which is circular - you cannot set a context you have not saved yet. It now names
   `Connect-AzAccount` and `Set-AzContext`. Left over from removing `Select-MsecAzureContext`.
 
+## [0.7.0] - 2026-10-20
+
 ## [0.6.0] - 2026-10-19
 
 ### Added
@@ -284,6 +286,8 @@ All notable changes to this project will be documented in this file.
   The test stub for `Connect-MgGraph` had to gain the parameter too. Without it the call fails
   to bind only where the stub is used - on a machine with the real Graph SDK installed the
   same test passes, which is the kind of difference that reaches CI and not the author.
+
+## [0.7.0] - 2026-10-20
 
 ## [0.5.0] - 2026-10-14
 
@@ -1537,6 +1541,8 @@ All notable changes to this project will be documented in this file.
 
   Two bulk calls rather than one per mailbox: 305 mailboxes in about seven seconds.
 
+## [0.7.0] - 2026-10-20
+
 ## [0.4.0] - 2026-09-29
 
 ### Added
@@ -2242,6 +2248,8 @@ All notable changes to this project will be documented in this file.
   Measured live: 9 secure files across an organization, none open to all pipelines. Eight were
   `.key` migration markers uploaded between 875 and 1479 days ago and never removed; the ninth
   was a `fullchain.pfx` certificate.
+## [0.7.0] - 2026-10-20
+
 ## [0.3.0] - 2026-09-09
 
 ### Added
@@ -2595,6 +2603,8 @@ All notable changes to this project will be documented in this file.
 - `-ExchangeDirectoryRole` is now `-DirectoryRole`, because Teams needs the same role for the
   same reason and the old name said otherwise. The old name still works as an alias, so
   nothing that passed it in 0.2.0 breaks.
+
+## [0.7.0] - 2026-10-20
 
 ## [0.2.0] - 2026-09-07
 
@@ -3404,6 +3414,8 @@ All notable changes to this project will be documented in this file.
   `GrantedNow` / `AlreadyGranted` / `UnavailableRoles`, and says to reconnect: consent does
   not apply to a token that was already issued, so re-running to fix a 403 and retrying in
   the same session hits the same 403.
+
+## [0.7.0] - 2026-10-20
 
 ## [0.1.0] - 2026-08-20
 
