@@ -26,22 +26,37 @@ function Connect-MsecAdmin {
         actually granted, and a missing one is reported by name here rather than discovered
         later.
 
-        THE SESSION OUTLIVES THE SHELL BY DEFAULT, THE SAME WAY Connect-Msec DOES. Its
-        read session persists because a tenant profile lets any later session re-authenticate
-        with the Key Vault certificate; this one persists because -ContextScope CurrentUser
-        caches a refresh token. Connect-MgGraph's own default is Process scope, which left the
-        two commands behaving differently - the read session available everywhere, the write
-        session only inside the shell that signed in, with an empty MSAL cache file on disk as
-        the only clue.
+        THE SESSION PERSISTS, SO IT CAN BE REUSED. -ContextScope defaults to CurrentUser,
+        which caches a refresh token, so signing in once covers later shells and later
+        switches instead of opening a browser each time. A named context exists to collect
+        connections and reuse the ones already authenticated; a write session that evaporated
+        with the shell could never be part of that.
 
-        THAT PERSISTENCE IS A REAL WIDENING, not a convenience. Until the token expires or you
-        run Disconnect-MgGraph, any process running as you can obtain a delegated token
-        carrying your write scopes, with no prompt and nobody watching. The module's position
-        is still that writes belong to a person - that is why they are delegated rather than
-        application permissions, and why every change is attributable to a named account - but
-        "a person signed in once on this machine" is a weaker claim than "a person is at the
-        keyboard now". Use -ContextScope Process where that distinction matters, and
-        Disconnect-MgGraph when you are done.
+        PERSISTING THE CREDENTIAL IS NOT THE SAME AS SHARING THE POINTER, and conflating the
+        two is the mistake worth avoiding here. The cached token says "this person has signed
+        in on this machine". It does NOT decide which tenant any given shell is aimed at -
+        Get-MgContext is per process, and this command always names the tenant and the account
+        explicitly, so two shells can hold write sessions in two different tenants at the same
+        time and neither can re-point the other. The thing that genuinely did leak between
+        shells was the AZURE context pointer, which Set-MsecContext and Connect-MsecAzure keep
+        process-scoped for exactly that reason.
+
+        WHAT IT DOES COST: until the token expires or you run Disconnect-MgGraph, any process
+        running as you can obtain a delegated token carrying your write scopes, with no prompt.
+        The module's position is still that writes belong to a person - that is why they are
+        delegated rather than application permissions, and why every change is attributable to
+        a named account - but "somebody signed in on this machine" is a weaker claim than "a
+        person is at the keyboard now". -ContextScope Process declines the trade, at the price
+        of signing in again on every switch.
+
+        IT SIGNS IN TO THE CLOUD Connect-Msec IS READING, not always the commercial one.
+        Connect-MgGraph defaults to Global, whose authority is login.microsoftonline.com, and a
+        sovereign tenant id does not resolve there - against a China tenant the sign-in is
+        rejected before any consent screen and the only message is
+        "InteractiveBrowserCredential authentication failed:" with nothing after the colon. The
+        cloud is taken from the read session's Graph endpoint, so run Connect-Msec first. With
+        no read session the commercial cloud is assumed, which is right for most people and
+        wrong in exactly the case that is hardest to diagnose.
 
         IT WILL REFUSE A DIFFERENT TENANT FROM THE ONE YOU ARE READING. If Connect-Msec holds
         a session, this must sign in to the same tenant. Reading one tenant and writing to
@@ -56,9 +71,12 @@ function Connect-MsecAdmin {
         Without it, a mismatch against the account this tenant used last time is a warning.
 
     .PARAMETER ContextScope
-        Where the token lives. 'CurrentUser' (default) caches a refresh token so other
-        sessions - and other processes running as you - can write. 'Process' keeps it in this
-        shell only, which is Connect-MgGraph's own default.
+        Where the token lives. 'CurrentUser' (default) caches a refresh token so later shells
+        and later context switches reuse it instead of prompting. 'Process' keeps it in this
+        shell only - Connect-MgGraph's own default - and then every switch that moves a write
+        session signs in again.
+
+        Neither value decides which tenant a shell is aimed at; see the description.
 
     .PARAMETER Scope
         Delegated scopes to request. DEFAULTS TO EVERY SCOPE THE MODULE'S WRITE COMMANDS NEED,
@@ -125,22 +143,18 @@ function Connect-MsecAdmin {
         # after the first time it checks itself.
         [string] $Account,
 
-        # WHERE THE TOKEN LIVES, AND IT DEFAULTS TO SURVIVING THIS SHELL - matching
-        # Connect-Msec, which saves a tenant profile that any later session replays.
+        # WHERE THE TOKEN LIVES, AND IT DEFAULTS TO PERSISTING so a saved context can reuse a
+        # session that is already authenticated rather than prompting on every switch.
         #
-        # Connect-MgGraph's own default is 'Process': the token stays in the memory of the
-        # shell that signed in, the MSAL cache file is created and left EMPTY, and every
-        # other process sees no session at all. That is a surprising difference between the
-        # module's two connect commands - the read session works everywhere, the write
-        # session works in exactly one place - and it was reported as the admin session
-        # "not being seen".
+        # PERSISTING THE CREDENTIAL IS NOT SHARING THE POINTER. Get-MgContext is per process
+        # and this command always names the tenant and account explicitly, so two shells can
+        # hold write sessions in two different tenants at once and neither re-points the
+        # other. The pointer that genuinely leaked between shells was the AZURE context, and
+        # that is process-scoped in Set-MsecContext and Connect-MsecAzure.
         #
-        # 'CurrentUser' CACHES A REFRESH TOKEN ON DISK, which is a real widening and the
-        # reason this is written down rather than silently flipped: until it expires or you
-        # Disconnect-MgGraph, ANY process running as you can obtain a delegated token with
-        # your write scopes, without a prompt and without you watching. That is a deliberate
-        # trade for making the command behave like its sibling. Use -ContextScope Process
-        # for a session that dies with the shell.
+        # It is still a real widening: until the token expires, any process running as this
+        # user can obtain a delegated token with these write scopes without a prompt.
+        # 'Process' declines that, and pays for it with a browser on every switch.
         [ValidateSet('Process', 'CurrentUser')]
         [string] $ContextScope = 'CurrentUser',
 
@@ -161,14 +175,27 @@ function Connect-MsecAdmin {
                       ContextScope = $ContextScope }
     if ($TenantId) { $connectArgs['TenantId'] = $TenantId }
 
+    # THE CLOUD HAS TO COME FROM THE READ SESSION, because Connect-MgGraph defaults to Global
+    # and a sovereign tenant id is not resolvable there. Sent to a China tenant, the Global
+    # authority (login.microsoftonline.com) rejects the sign-in before any consent screen, and
+    # all the caller sees is "InteractiveBrowserCredential authentication failed:" with nothing
+    # after the colon. Same resolver as Connect-MsecGraphSdk, so read and write land together.
+    $graphResource = if ($script:MsecSession -and $script:MsecSession.Endpoints -and
+                         $script:MsecSession.Endpoints.GraphResource) {
+        $script:MsecSession.Endpoints.GraphResource
+    }
+    $environment = Resolve-MsecGraphEnvironment -GraphResource $graphResource
+    if ($environment -ne 'Global') { $connectArgs['Environment'] = $environment }
+
     # SAID OUT LOUD SO IT CAN BE QUOTED. "Which scopes does it actually ask for?" is the
     # first question an administrator asks when consent is refused, and the answer was
     # previously only discoverable by reading this file.
     # The format string is parenthesised BEFORE -f. Without it, -f binds tighter than + and
     # formats only the last fragment, leaving {0} in the output as literal text.
     Write-Verbose (("Requesting {0} delegated scope(s) on Microsoft Graph Command Line Tools " +
-                    "(appId 14d82eec-204b-4c2f-b7e8-296a70dab67e) in tenant {1}: {2}") -f
-                   @($Scope).Count, $(if ($TenantId) { $TenantId } else { '(default)' }), ($Scope -join ', '))
+                    "(appId 14d82eec-204b-4c2f-b7e8-296a70dab67e) in tenant {1} ({2} cloud): {3}") -f
+                   @($Scope).Count, $(if ($TenantId) { $TenantId } else { '(default)' }),
+                   $environment, ($Scope -join ', '))
 
     Connect-MgGraph @connectArgs
 
@@ -197,10 +224,11 @@ function Connect-MsecAdmin {
     # Reading one tenant and writing to another is silently wrong rather than loudly broken.
     if ($script:MsecSession -and $script:MsecSession.TenantId -and
         $context.TenantId -and $context.TenantId -ne $script:MsecSession.TenantId) {
-        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+        # REFUSED WITHOUT PURGING THE SHARED SIGN-IN. See the note on the account check below.
+        $script:MsecAdminSession = $null
         throw ("Connect-Msec is reading tenant $($script:MsecSession.TenantId) but this sign-in landed on " +
                "$($context.TenantId). Refusing rather than writing to a different tenant than you are reading. " +
-               'Pass -TenantId explicitly if that is genuinely what you intend.')
+               'No write session was established. Pass -TenantId explicitly if that is genuinely what you intend.')
     }
 
     # THE ACCOUNT MATTERS AS MUCH AS THE TENANT, and only this check can tell them apart.
@@ -215,20 +243,32 @@ function Connect-MsecAdmin {
     # session belongs to the wrong identity is no use once a Set-* has run.
     $expected = if ($Account) { $Account } else { $null }
     if ($expected -and $expected -ne [string] $context.Account) {
-        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+        # REFUSED WITHOUT Disconnect-MgGraph, AND THAT IS THE POINT. The SDK's own words: "you
+        # will remain signed in until you invoke Disconnect-MgGraph... sign-in persists across
+        # PowerShell sessions because Microsoft Graph PowerShell securely caches the token."
+        # Purging here destroyed exactly that, so with two identities every switch tore down
+        # the sign-in it had just made and the next one started from an empty cache - a browser
+        # on every single context switch, forever. Leaving the cache intact lets both accounts
+        # accumulate, which is what "sign in once per account" needs.
+        #
+        # SAFE BECAUSE msec's OWN GATE IS SEPARATE: Assert-MsecAdminSession requires
+        # $script:MsecAdminSession, which is cleared here and never set on this path, so no
+        # Set-Msec* command can run against the wrong identity.
+        $script:MsecAdminSession = $null
         throw ("Asked to sign in as $expected but the sign-in landed on $($context.Account). " +
                'Connect-MgGraph cannot choose the account - the browser reuses whichever it ' +
-               'remembers - so the session has been closed rather than left on the wrong identity. ' +
-               'Run Disconnect-MgGraph, then sign in again and pick "Use another account".')
+               'remembers - so no write session was established. Sign in again and pick ' +
+               '"Use another account"; run Disconnect-MgGraph first only if the browser will ' +
+               'not offer the chooser, since that also clears the cached sign-in.')
     }
 
     # No expectation passed: fall back to warning against what this tenant used last time.
     if (-not $expected -and $profile -and $profile.AdminAccount -and
         $profile.AdminAccount -ne [string] $context.Account) {
         Write-Warning ("Signed in as $($context.Account), but the last admin session for tenant " +
-            "$($context.TenantId) was $($profile.AdminAccount). If that is not deliberate, run " +
-            'Disconnect-MgGraph and sign in again choosing the other account - the browser reuses ' +
-            'whichever it remembers, and a wrong one here fails later as a cross-tenant policy error.')
+            "$($context.TenantId) was $($profile.AdminAccount). If that is not deliberate, sign in " +
+            'again choosing the other account - the browser reuses whichever it remembers, and a ' +
+            'wrong one here fails later as a cross-tenant policy error.')
     }
 
     # Remembered so the next sign-in into this tenant can make the comparison above. A UPN,

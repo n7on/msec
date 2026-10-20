@@ -48,27 +48,45 @@ Every requested scope is checked against what was
 actually granted, and a missing one is reported by name here rather than discovered
 later.
 
-THE SESSION OUTLIVES THE SHELL BY DEFAULT, THE SAME WAY Connect-Msec DOES.
-Its
-read session persists because a tenant profile lets any later session re-authenticate
-with the Key Vault certificate; this one persists because -ContextScope CurrentUser
-caches a refresh token.
-Connect-MgGraph's own default is Process scope, which left the
-two commands behaving differently - the read session available everywhere, the write
-session only inside the shell that signed in, with an empty MSAL cache file on disk as
-the only clue.
+THE SESSION PERSISTS, SO IT CAN BE REUSED.
+-ContextScope defaults to CurrentUser,
+which caches a refresh token, so signing in once covers later shells and later
+switches instead of opening a browser each time.
+A named context exists to collect
+connections and reuse the ones already authenticated; a write session that evaporated
+with the shell could never be part of that.
 
-THAT PERSISTENCE IS A REAL WIDENING, not a convenience.
-Until the token expires or you
-run Disconnect-MgGraph, any process running as you can obtain a delegated token
-carrying your write scopes, with no prompt and nobody watching.
-The module's position
-is still that writes belong to a person - that is why they are delegated rather than
-application permissions, and why every change is attributable to a named account - but
-"a person signed in once on this machine" is a weaker claim than "a person is at the
-keyboard now".
-Use -ContextScope Process where that distinction matters, and
-Disconnect-MgGraph when you are done.
+PERSISTING THE CREDENTIAL IS NOT THE SAME AS SHARING THE POINTER, and conflating the
+two is the mistake worth avoiding here.
+The cached token says "this person has signed
+in on this machine".
+It does NOT decide which tenant any given shell is aimed at -
+Get-MgContext is per process, and this command always names the tenant and the account
+explicitly, so two shells can hold write sessions in two different tenants at the same
+time and neither can re-point the other.
+The thing that genuinely did leak between
+shells was the AZURE context pointer, which Set-MsecContext and Connect-MsecAzure keep
+process-scoped for exactly that reason.
+
+WHAT IT DOES COST: until the token expires or you run Disconnect-MgGraph, any process
+running as you can obtain a delegated token carrying your write scopes, with no prompt.
+The module's position is still that writes belong to a person - that is why they are
+delegated rather than application permissions, and why every change is attributable to
+a named account - but "somebody signed in on this machine" is a weaker claim than "a
+person is at the keyboard now".
+-ContextScope Process declines the trade, at the price
+of signing in again on every switch.
+
+IT SIGNS IN TO THE CLOUD Connect-Msec IS READING, not always the commercial one.
+Connect-MgGraph defaults to Global, whose authority is login.microsoftonline.com, and a
+sovereign tenant id does not resolve there - against a China tenant the sign-in is
+rejected before any consent screen and the only message is
+"InteractiveBrowserCredential authentication failed:" with nothing after the colon.
+The
+cloud is taken from the read session's Graph endpoint, so run Connect-Msec first.
+With
+no read session the commercial cloud is assumed, which is right for most people and
+wrong in exactly the case that is hardest to diagnose.
 
 IT WILL REFUSE A DIFFERENT TENANT FROM THE ONE YOU ARE READING.
 If Connect-Msec holds
@@ -156,10 +174,13 @@ Accept wildcard characters: False
 
 ### -ContextScope
 Where the token lives.
-'CurrentUser' (default) caches a refresh token so other
-sessions - and other processes running as you - can write.
+'CurrentUser' (default) caches a refresh token so later shells
+and later context switches reuse it instead of prompting.
 'Process' keeps it in this
-shell only, which is Connect-MgGraph's own default.
+shell only - Connect-MgGraph's own default - and then every switch that moves a write
+session signs in again.
+
+Neither value decides which tenant a shell is aimed at; see the description.
 
 ```yaml
 Type: String

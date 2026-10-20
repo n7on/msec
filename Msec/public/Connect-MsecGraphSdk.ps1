@@ -80,29 +80,9 @@ function Connect-MsecGraphSdk {
         'https://graph.microsoft.com'
     }
 
-    # Matched on the ENDPOINT, not the name. The SDK calls the Chinese cloud 'China' where Az
-    # calls it 'AzureChinaCloud', so mapping by name would need a lookup table that goes stale
-    # every time a sovereign cloud is added - and the endpoint is what actually has to agree.
-    $environment = 'Global'
-    try {
-        $match = @(Get-MgEnvironment -ErrorAction Stop |
-                       Where-Object { $_.GraphEndpoint -and $_.GraphEndpoint.TrimEnd('/') -eq $resource.TrimEnd('/') })
-        if ($match.Count -eq 1) {
-            $environment = $match[0].Name
-        }
-        elseif ($match.Count -gt 1) {
-            $environment = $match[0].Name
-            Write-Warning "$($match.Count) Graph SDK environments share the endpoint '$resource'; using '$environment'."
-        }
-        else {
-            # Better to say so than to sign in silently against the wrong cloud, which fails
-            # later as a wall of 401s that look like a permission problem.
-            Write-Warning "No Microsoft.Graph SDK environment matches the endpoint '$resource'. Falling back to 'Global', which is probably wrong for this cloud."
-        }
-    }
-    catch {
-        Write-Warning "Could not list the Graph SDK environments, so 'Global' is assumed: $($_.Exception.Message)"
-    }
+    # Shared with Connect-MsecAdmin: both have to land in the same cloud, and two copies of
+    # the matching rule is how they would stop agreeing.
+    $environment = Resolve-MsecGraphEnvironment -GraphResource $resource
 
     $token = Get-MsecAccessToken -Resource $resource
 

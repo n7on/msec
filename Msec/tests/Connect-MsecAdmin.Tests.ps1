@@ -92,7 +92,7 @@ Describe 'Connect-MsecAdmin' {
         }
     }
 
-    It 'refuses a tenant different from the one being read, and closes the session' {
+    It 'refuses a tenant different from the one being read, without purging the sign-in' {
         InModuleScope msec {
             Mock Get-Module -ParameterFilter { $ListAvailable } -MockWith { [pscustomobject]@{ Name = 'Microsoft.Graph.Authentication' } }
             Mock Import-Module -MockWith { }
@@ -107,8 +107,13 @@ Describe 'Connect-MsecAdmin' {
 
             { Connect-MsecAdmin -Scope 'SecurityAlert.ReadWrite.All' -TenantId 'OTHER-TENANT' } |
                 Should -Throw '*different tenant*'
-            # The half-open session must not be left behind for a later command to find.
-            Should -Invoke Disconnect-MgGraph -Times 1 -Exactly
+
+            # NO Disconnect-MgGraph. It clears the SDK's cached sign-in, which persists across
+            # PowerShell sessions by design - purging it here meant every refused switch threw
+            # away the credential the next one needed. msec's own gate is separate:
+            # $script:MsecAdminSession is left null, so no Set-Msec* can run.
+            Should -Invoke Disconnect-MgGraph -Times 0
+            $script:MsecAdminSession | Should -BeNullOrEmpty
         }
     }
 
@@ -155,12 +160,15 @@ Describe 'Connect-MsecAdmin' {
         }
     }
 
-    It 'persists the session by default, matching Connect-Msec' {
-        # THE BUG THIS PREVENTS. Connect-MgGraph defaults to Process scope, so the token lived
-        # in the shell that signed in: the read session worked in every process and the write
-        # session worked in exactly one, with a zero-byte MSAL cache file as the only clue.
-        # The two connect commands have to behave the same way, or the difference surfaces as
-        # "the admin session is not being seen".
+    It 'persists the write session by default, so a saved context can reuse it' {
+        # WHAT THIS PREVENTS. With Process scope nothing is cached, so every Set-MsecContext
+        # that moves a write session opens a browser - reported from a live session as
+        # "it works until the admin context is logged in, then it needs auth every switch".
+        # A named context exists to reuse connections that are already authenticated.
+        #
+        # Persisting the credential is NOT sharing the pointer: Get-MgContext is per process
+        # and this command names the tenant and account explicitly, so two shells can hold
+        # write sessions in two different tenants at once.
         #
         # Import-Module IS MOCKED, like the test above. Letting the real
         # Microsoft.Graph.Authentication load changes how Get-MgEnvironment resolves for the
@@ -183,8 +191,8 @@ Describe 'Connect-MsecAdmin' {
     }
 
     It 'keeps the token in this shell only when asked' {
-        # The escape hatch for "a person is at the keyboard now" rather than "a person signed
-        # in once on this machine".
+        # The opt-out, for "a person is at the keyboard now" rather than "somebody signed in
+        # on this machine" - at the price of signing in again on every context switch.
         $scope = InModuleScope msec {
             Mock Get-Module -ParameterFilter { $ListAvailable } -MockWith { [pscustomobject]@{ Name = 'Microsoft.Graph.Authentication' } }
             Mock Import-Module -MockWith { }
@@ -199,6 +207,76 @@ Describe 'Connect-MsecAdmin' {
         }
 
         $scope | Should -Be 'Process'
+    }
+
+    It 'signs in to the cloud the read session is on, not always Global' {
+        # THE BUG THIS PREVENTS. Connect-MgGraph defaults to Global, whose authority is
+        # login.microsoftonline.com. A China tenant id does not resolve there, so the sign-in
+        # was rejected before any consent screen with nothing but
+        # "InteractiveBrowserCredential authentication failed:" - no cloud named, no tenant
+        # named. Connect-Msec and Connect-MsecGraphSdk were already cloud-aware; this was not.
+        $env = InModuleScope msec {
+            Mock Get-Module -ParameterFilter { $ListAvailable } -MockWith { [pscustomobject]@{ Name = 'Microsoft.Graph.Authentication' } }
+            Mock Import-Module -MockWith { }
+            Mock Get-MgEnvironment -MockWith {
+                @([pscustomobject]@{ Name = 'Global'; GraphEndpoint = 'https://graph.microsoft.com' },
+                  [pscustomobject]@{ Name = 'China';  GraphEndpoint = 'https://microsoftgraph.chinacloudapi.cn' })
+            }
+            Mock Connect-MgGraph -MockWith { $script:SeenEnv = $Environment }
+            Mock Get-MgContext -MockWith {
+                [pscustomobject]@{ Account = 'me@contoso.cn'; TenantId = 'tenant-cn'
+                                   Scopes = @('SecurityAlert.ReadWrite.All') }
+            }
+            $script:MsecSession = @{ TenantId = 'tenant-cn'
+                                     Endpoints = @{ GraphResource = 'https://microsoftgraph.chinacloudapi.cn' } }
+            $null = Connect-MsecAdmin -Scope 'SecurityAlert.ReadWrite.All'
+            $script:SeenEnv
+        }
+
+        $env | Should -Be 'China'
+    }
+
+    It 'leaves the environment alone on the commercial cloud' {
+        # -Environment Global is the default, and passing it explicitly would make every
+        # ordinary sign-in depend on Get-MgEnvironment resolving.
+        $env = InModuleScope msec {
+            Mock Get-Module -ParameterFilter { $ListAvailable } -MockWith { [pscustomobject]@{ Name = 'Microsoft.Graph.Authentication' } }
+            Mock Import-Module -MockWith { }
+            Mock Get-MgEnvironment -MockWith {
+                @([pscustomobject]@{ Name = 'Global'; GraphEndpoint = 'https://graph.microsoft.com' })
+            }
+            Mock Connect-MgGraph -MockWith { $script:SeenEnv = $PSBoundParameters.ContainsKey('Environment') }
+            Mock Get-MgContext -MockWith {
+                [pscustomobject]@{ Account = 'me@contoso.com'; TenantId = 'tenant-1'
+                                   Scopes = @('SecurityAlert.ReadWrite.All') }
+            }
+            $script:MsecSession = @{ TenantId = 'tenant-1'
+                                     Endpoints = @{ GraphResource = 'https://graph.microsoft.com' } }
+            $null = Connect-MsecAdmin -Scope 'SecurityAlert.ReadWrite.All'
+            $script:SeenEnv
+        }
+
+        $env | Should -BeFalse
+    }
+
+    It 'assumes the commercial cloud when there is no read session to ask' {
+        # Connect-MsecAdmin does not require Connect-Msec, so an unknown cloud must not warn
+        # on every call - there is no better answer available.
+        $warnings = InModuleScope msec {
+            Mock Get-Module -ParameterFilter { $ListAvailable } -MockWith { [pscustomobject]@{ Name = 'Microsoft.Graph.Authentication' } }
+            Mock Import-Module -MockWith { }
+            Mock Get-MgEnvironment -MockWith { @() }
+            Mock Connect-MgGraph -MockWith { }
+            Mock Get-MgContext -MockWith {
+                [pscustomobject]@{ Account = 'me@contoso.com'; TenantId = 'tenant-1'
+                                   Scopes = @('SecurityAlert.ReadWrite.All') }
+            }
+            $script:MsecSession = $null
+            $null = Connect-MsecAdmin -Scope 'SecurityAlert.ReadWrite.All' -WarningVariable w -WarningAction SilentlyContinue
+            @($w).Count
+        }
+
+        $warnings | Should -Be 0
     }
 
     It 'rejects a context scope Connect-MgGraph would not understand' {
@@ -257,7 +335,9 @@ Describe 'Connect-MsecAdmin' {
         }
 
         $w | Should -Match 'someone\.else@contoso\.com'
-        $w | Should -Match 'Disconnect-MgGraph'
+        # It must NOT tell the reader to run Disconnect-MgGraph as the routine fix - that
+        # clears the cached sign-in and costs a full browser login next time.
+        $w | Should -Not -Match 'Disconnect-MgGraph'
     }
 
     It 'records the account it signed in as, so the next sign-in can compare' {
@@ -281,7 +361,7 @@ Describe 'Connect-MsecAdmin' {
         $saved | Should -Be 'me@contoso.com'
     }
 
-    It 'refuses, and closes the session, when the sign-in lands on a different account than asked for' {
+    It 'refuses a different account than asked for, without purging the sign-in' {
         # THE POINT OF -Account. Connect-MgGraph cannot pick an identity, so the browser does -
         # and it reuses whichever it remembers. Being told afterwards is no use once a Set-*
         # has run against the wrong tenant, so this throws and disconnects rather than warning.
@@ -301,8 +381,13 @@ Describe 'Connect-MsecAdmin' {
             { Connect-MsecAdmin -Scope 'SecurityAlert.ReadWrite.All' -Account 'right@contoso.com' } |
                 Should -Throw '*right@contoso.com*wrong@contoso.com*'
 
-            # Left connected as the wrong identity would be worse than failing.
-            $script:DidDisconnect | Should -BeTrue
+            # THE BUG THIS PREVENTS. Purging here destroyed the SDK's cached sign-in, so with
+            # two identities across two tenants every switch tore down the credential it had
+            # just created and the next switch needed the browser again - reported from a live
+            # session as "I need to auth every time I change context".
+            $script:DidDisconnect | Should -BeFalse
+            # No write session was established, which is what actually keeps writes safe.
+            $script:MsecAdminSession | Should -BeNullOrEmpty
         }
     }
 
