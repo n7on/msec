@@ -32,6 +32,9 @@ BeforeAll {
     $graphStubs = @{
         'Get-MgContext'      = { [CmdletBinding()] param() }
         'Disconnect-MgGraph' = { [CmdletBinding()] param() }
+        # Needed by the cloud tests. Absent entirely on the macos runner - not merely
+        # unloadable - so the mock failed with "Could not find Command Get-MgEnvironment".
+        'Get-MgEnvironment'  = { [CmdletBinding()] param([string] $Name) }
         'Connect-MgGraph'    = {
             [CmdletBinding()]
             param(
