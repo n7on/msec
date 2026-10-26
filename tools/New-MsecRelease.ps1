@@ -97,7 +97,12 @@ else {
     $anchor = "(?m)^(##\s*\[\d+\.\d+\.\d+)"
     if ($raw -notmatch $anchor) { throw "Could not find an existing '## [x.y.z]' heading in CHANGELOG.md." }
     if ($PSCmdlet.ShouldProcess($changelog, "Insert '## [$Version] - $today'")) {
-        $raw = [regex]::Replace($raw, $anchor, "## [$Version] - $today`n`n`$1", 1)
+        # THE INSTANCE Replace, BECAUSE ONLY IT TAKES A COUNT. [regex]::Replace's static
+        # overloads are (input, pattern, replacement[, RegexOptions[, TimeSpan]]) - there is no
+        # count among them, so a trailing 1 is read as RegexOptions 1 (IgnoreCase) and EVERY
+        # match is replaced. That shipped a CHANGELOG with an empty version heading inserted
+        # above every previous release and the real entry still under [Unreleased].
+        $raw = ([regex]::new($anchor)).Replace($raw, "## [$Version] - $today`n`n`$1", 1)
         Set-Content -Path $changelog -Value $raw -NoNewline
     }
     Write-Warning "Inserted an EMPTY '## [$Version]' heading. Write the entry before continuing - it is what people read to decide whether to upgrade."
@@ -107,7 +112,8 @@ else {
 Step 'Manifest'
 if ($PSCmdlet.ShouldProcess($manifestPath, "Set ModuleVersion to $Version")) {
     $m = Get-Content $manifestPath -Raw
-    $m = [regex]::Replace($m, "ModuleVersion\s*=\s*'[^']*'", "ModuleVersion     = '$Version'", 1)
+    # Instance Replace for the count - see the note on the CHANGELOG insert above.
+    $m = ([regex]::new("ModuleVersion\s*=\s*'[^']*'")).Replace($m, "ModuleVersion     = '$Version'", 1)
     Set-Content -Path $manifestPath -Value $m -NoNewline
     Write-Host "  ModuleVersion = $Version"
 }

@@ -5,6 +5,163 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `Get-MsecSentinelIncident` and `Set-MsecSentinelIncident` - read and write Microsoft Sentinel
+  incidents from the workspace itself, including the ones Defender XDR has never seen.
+
+  PROVIDERNAME IS WHY THEY EXIST. A workspace in use before it was connected to Defender XDR
+  keeps those older incidents with `ProviderName` `Azure Sentinel`; they never sync to XDR, so
+  `Get-MsecDefenderIncident` and `Set-MsecDefenderIncident` cannot see or touch them. Measured
+  on one workspace: 628 of 3,721 incidents, and 53 of the 248 still open.
+
+  AND THE `SecurityIncident` TABLE IS NOT A SUBSTITUTE - it ages out with workspace retention,
+  31 days on the workspace measured, while ARM keeps the incidents far longer. The oldest OPEN
+  incident found this way was created 21 months earlier. So an incident can be open, invisible
+  to XDR, and absent from KQL at the same time: both obvious places return nothing, and nothing
+  looks like clean.
+
+  THEY PAGE, AND NOT PAGING IS A SILENT TRUNCATION - the same workspace returned 3,721
+  incidents over four pages at the largest page size, and still had a `nextLink` after six
+  pages at a smaller one.
+
+  `Set-MsecSentinelIncident` READS BEFORE IT WRITES, because the API has no PATCH and PUT
+  REPLACES the resource: a body carrying only the changed fields silently discards title,
+  description, labels and owner. The existing properties are carried forward and the change
+  applied on top. The etag goes out as `If-Match`, so a concurrent edit fails the write with a
+  412 explained as such rather than overwriting somebody's work.
+
+  IT ENFORCES THE API'S CLASSIFICATION RULES up front - `BenignPositive`, `TruePositive` and
+  `FalsePositive` each require a `-ClassificationReason`, `Undetermined` must not carry one,
+  and classification applies only to a closed incident - so the failure names the rule instead
+  of arriving as a bare 400.
+
+  Both run on the Az context as YOU: Sentinel is an Azure resource, so this is Azure RBAC
+  (Microsoft Sentinel Reader / Responder on the workspace), not an Entra grant the msec app
+  could hold.
+
+  `Set-MsecSentinelIncident` THEREFORE DOES NOT USE `Connect-MsecAdmin`, unlike
+  `Set-MsecDefenderIncident`, and the difference is forced rather than chosen: an ARM endpoint
+  will not accept a Graph token. Accountability is unchanged - Sentinel records the change
+  under your own UPN - but the ceremony is: the Az context is already cached, so this runs
+  unattended where the Defender command wants a browser. `ConfirmImpact` is High, so an
+  unattended caller must pass `-Confirm:$false` deliberately, and the Sentinel Responder role
+  on the workspace deserves the same review a Graph consent would have had.
+
+- Bundled hunting query `Device/Process` - what actually executes across the estate: one row
+  per distinct binary with version, declared publisher, hash, spread and first/last seen.
+  `Search-MsecDefenderHunting -Subject Device -Name Process`.
+
+  SIGNER IS A CLAIM, NOT A SIGNATURE. `ProcessVersionInfoCompanyName` is a PE version resource
+  any author can set, so an empty value is not evidence a file is unsigned and a populated one
+  is not evidence it is signed. The query deliberately does not filter on it; join
+  `DeviceFileCertificateInfo` for the real Authenticode state.
+
+  IDENTITY IS THE HASH, NOT THE NAME - measured, `7zG.exe` appeared as five distinct SHA256s
+  across five versions in thirty days, so grouping by name makes "which version" unanswerable.
+
+  "NOT RENAMED" AND "CANNOT TELL" ARE KEPT APART. Barely half the events carry an
+  `OriginalFileName` at all - 5,434,686 of 11,012,759 measured - so `Renamed` is `yes`, `no`,
+  or EMPTY where the file declares no original name. It is a string because a KQL bool arrives
+  through this API as `Int64` 0/1, and `-eq 'True'` silently matches nothing.
+
+  THE EXTENSION IS STRIPPED FROM BOTH SIDES before comparing names, because Microsoft's own
+  version resources omit it - `UsoClient.exe` declares `UsoClient`. Comparing raw strings
+  reported 13,523 "renamed" binaries led by ordinary Windows components; stripping it leaves
+  7,042 genuine base-name differences.
+
+- Bundled hunting query `Device/AsrBlockedFile` - ASR events resolved to a real file identity
+  by joining `DeviceProcessEvents` on SHA256, because the ASR event carries a hash and no
+  version. The resolving run usually comes from a DIFFERENT device: one that was blocked never
+  ran the file, so it never produced a process event to read a version from. An empty `Version`
+  means unresolved, not unversioned.
+
+- Bundled hunting query `Device/AsrRule` - Attack Surface Reduction events per rule, outcome,
+  file and device. `Search-MsecDefenderHunting -Subject Device -Name AsrRule`.
+
+  AUDITED AND BLOCKED ANSWER DIFFERENT QUESTIONS and the query keeps them apart. "Audited" is
+  what breaks if you enforce a rule; "Blocked" is what already broke. Defender packs both the
+  rule and the outcome into one `ActionType` string - `AsrUntrustedExecutableBlocked` - so
+  `Rule` and `Outcome` are split out rather than left to the reader.
+
+  IT RECORDS THE WINDOW IT ACTUALLY GOT, because `Search-MsecDefenderHunting` defaults to SEVEN
+  days and the window reaches the API as its own timespan - so an `ago(30d)` written inside a
+  `-Query` is silently overridden and you get seven days while believing you asked for thirty.
+  Measured on one tenant, the identical query returned 8 distinct days by default and 31 with
+  `-Days 30`, with event counts differing roughly four-fold. `FirstSeen` and `Days` make that
+  visible in the result instead of leaving it to be inferred.
+
+  DEVICES MATTER MORE THAN EVENTS for blast radius: measured, a single machine with a
+  non-standard install path produced the large majority of one rule's events.
+
+- Bundled query `Law/AzureDevOps/Governance` - Azure DevOps audit events that represent a
+  governance change: permissions, policies, group membership, service connections, agents.
+  Requires the organization's audit log to be streamed to the workspace.
+
+  READING THE TABLE UNFILTERED TELLS YOU ALMOST NOTHING. Measured on one organization over 30
+  days: 68,953 events, of which 30,096 were `Library/Execute` - a pipeline reading a variable
+  group - and 16,715 `Pipelines/Execute`. This query returns 3,057 of them, 4.4%.
+
+  CATEGORY ALONE DOES NOT SEPARATE NOISE FROM SIGNAL, which is what makes a naive
+  `where Category != "Execute"` look like it worked. `Pipelines.RunRetained` and
+  `Pipelines.RunUnretained` are `Category == "Modify"` and are pure run-retention bookkeeping -
+  9,384 of the 11,000 non-Execute events on the same organization. They are excluded by
+  operation name instead.
+
+  `Git.RefUpdatePoliciesBypassed` is the row to read first - a push that bypassed branch
+  policy, 168 of them by 7 actors in the measured window. It is the only operation here that
+  describes a control being stepped around rather than reconfigured.
+
+  Streaming also outlives the source: the ADO audit API keeps 90 days, after which the
+  workspace's retention is what remains.
+
+  THERE IS NO BYPASS REASON IN THIS DATA, and the query's header says so rather than leaving
+  it to be rediscovered. `Git.RefUpdatePoliciesBypassed` records a PUSH that bypassed policy;
+  Azure DevOps prompts for a justification on PULL REQUEST completion, a different event that
+  the measured organization's audit log did not contain at all in 30 days. `Data` carries repo,
+  branch and the before/after commit ids and nothing else, identically for human and service
+  identities. Those are now lifted into `Repo`, `Branch`, `OldCommit` and `NewCommit`, because
+  the bare `Details` sentence cannot be filtered or joined on.
+
+  AN ALL-ZERO COMMIT ID IS A DELETION, NOT A PUSH. Git uses `0000...0` as the null object id,
+  so an all-zero `NewObjectId` means the ref was deleted and an all-zero `OldObjectId` means it
+  was created. Measured, 6 of the 14 human policy bypasses in 30 days were branch deletions -
+  a merged feature branch being tidied away, not code forced past review. `RefChange` says
+  which, and is empty for operations that do not touch a ref rather than claiming "pushed".
+
+- `Get-MsecDefenderIndicator` - every custom indicator in Defender for Endpoint, with what it
+  matches, what it does, who created it and whether it ever expires. `New-MsecDefenderIndicator`
+  could create one and nothing could list them, so the only way to see what was already in
+  place was the portal.
+
+  THE API HAS NO READ-ONLY PERMISSION, so this is a `Get-*` that needs a write scope. Listing
+  requires `Ti.ReadWrite` - normally the Security Administrator role - because Microsoft never
+  shipped a `Ti.Read`. It therefore runs on the Az context as YOU, not as the msec app: giving
+  the read-only identity a write permission so that a read becomes convenient is the trade this
+  module exists to refuse. A 403 names your account and that scope, rather than sending anyone
+  to check the app registration.
+
+  NO EXPIRY IS THE NORMAL CASE, not the exception - measured on one tenant, 63 of 63 indicators
+  had no `expirationTime`. `ExpiresUtc` is `$null` for those rather than a far-future date,
+  because "permanent" and "expires eventually" are different facts.
+
+  AN EMPTY SCOPE MEANS TENANT-WIDE, which reads like missing data and is the opposite - on the
+  same tenant 0 of 63 were scoped to a device group, so all 63 applied everywhere. Reported as
+  `Tenant-wide` rather than left blank.
+
+
+### Fixed
+
+- `Search-MsecDefenderHunting` leaked the API's `@odata.type` annotations as columns, so a
+  `summarize` with two counts came back with four columns and `Format-Table` was unreadable:
+  `Events@odata.type  #Int64` sat beside every `Events`.
+
+  THEY ARE METADATA ABOUT THE ROW, NOT PART OF IT. The hunting API sends a sibling key per
+  typed value; it is now dropped. Values themselves are still left as strings, so nothing
+  silently changes type between one API version and the next - the help said the API returns
+  JSON "without types", which was wrong, and now says what it actually sends.
+
+## [0.7.0] - 2026-10-20
+
+### Added
 - `Connect-MsecAzure` - signs in to the Azure plane as you, for the commands that read ARM
   rather than Graph. The module had a way in for the app (`Connect-Msec`) and a way in for your
   write scopes (`Connect-MsecAdmin`), but nineteen Azure-plane commands depend on the Az
@@ -122,6 +279,7 @@ All notable changes to this project will be documented in this file.
   `-ContextScope Process` is still there for "a person is at the keyboard now", at that price.
 
 ### Fixed
+
 - `Connect-MsecAdmin` no longer runs `Disconnect-MgGraph` when it refuses a sign-in, so a
   refusal stops costing you the cached credential.
 
@@ -177,8 +335,6 @@ All notable changes to this project will be documented in this file.
 - `Save-MsecContext` told you to run `Set-MsecContext` when there was no Azure context to save,
   which is circular - you cannot set a context you have not saved yet. It now names
   `Connect-AzAccount` and `Set-AzContext`. Left over from removing `Select-MsecAzureContext`.
-
-## [0.7.0] - 2026-10-20
 
 ## [0.6.0] - 2026-10-19
 
@@ -286,8 +442,6 @@ All notable changes to this project will be documented in this file.
   The test stub for `Connect-MgGraph` had to gain the parameter too. Without it the call fails
   to bind only where the stub is used - on a machine with the real Graph SDK installed the
   same test passes, which is the kind of difference that reaches CI and not the author.
-
-## [0.7.0] - 2026-10-20
 
 ## [0.5.0] - 2026-10-14
 
@@ -1541,8 +1695,6 @@ All notable changes to this project will be documented in this file.
 
   Two bulk calls rather than one per mailbox: 305 mailboxes in about seven seconds.
 
-## [0.7.0] - 2026-10-20
-
 ## [0.4.0] - 2026-09-29
 
 ### Added
@@ -2248,8 +2400,6 @@ All notable changes to this project will be documented in this file.
   Measured live: 9 secure files across an organization, none open to all pipelines. Eight were
   `.key` migration markers uploaded between 875 and 1479 days ago and never removed; the ninth
   was a `fullchain.pfx` certificate.
-## [0.7.0] - 2026-10-20
-
 ## [0.3.0] - 2026-09-09
 
 ### Added
@@ -2603,8 +2753,6 @@ All notable changes to this project will be documented in this file.
 - `-ExchangeDirectoryRole` is now `-DirectoryRole`, because Teams needs the same role for the
   same reason and the old name said otherwise. The old name still works as an alias, so
   nothing that passed it in 0.2.0 breaks.
-
-## [0.7.0] - 2026-10-20
 
 ## [0.2.0] - 2026-09-07
 
@@ -3414,8 +3562,6 @@ All notable changes to this project will be documented in this file.
   `GrantedNow` / `AlreadyGranted` / `UnavailableRoles`, and says to reconnect: consent does
   not apply to a token that was already issued, so re-running to fix a 403 and retrying in
   the same session hits the same 403.
-
-## [0.7.0] - 2026-10-20
 
 ## [0.1.0] - 2026-08-20
 
