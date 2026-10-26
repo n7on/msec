@@ -422,10 +422,13 @@ Compliance Administrator), which is what a 403 there usually means.
 - [Get-MsecDefenderCertificateUsage](./docs/commands/Get-MsecDefenderCertificateUsage.md) - Code-signing certificates in use on the fleet, with validity windows and days until expiry. SignerHash is the thumbprint a Defender indicator takes
 - [Get-MsecDefenderDetectionRule](./docs/commands/Get-MsecDefenderDetectionRule.md) - Defender XDR custom detection rules, with the `autoDisabled` ones Defender silently switched off when their query broke
 - [New-MsecDefenderDetectionRule](./docs/commands/New-MsecDefenderDetectionRule.md) - Create a custom detection rule, running the query first so a malformed one is refused rather than silently autoDisabled later. Runs as the signed-in user
+- [Get-MsecDefenderIndicator](./docs/commands/Get-MsecDefenderIndicator.md) - Every custom indicator, what it matches and what it does. Needs `Ti.ReadWrite` on YOUR account - this API has no read-only scope
 - [New-MsecDefenderIndicator](./docs/commands/New-MsecDefenderIndicator.md) - Create a Defender indicator - allow or block a certificate, hash, IP, domain or URL. Runs as the signed-in user
 
 ### Microsoft Sentinel
 - [Get-MsecSentinelRule](./docs/commands/Get-MsecSentinelRule.md) - Analytics rules with their tuning state - severity, alert grouping, suppression - and the id that joins them to the alerts they produced. Runs as the signed-in user
+- [Get-MsecSentinelIncident](./docs/commands/Get-MsecSentinelIncident.md) - Sentinel incidents read from the workspace, including the `Azure Sentinel` ones Defender XDR never sees
+- [Set-MsecSentinelIncident](./docs/commands/Set-MsecSentinelIncident.md) - **Writes.** Close, classify, assign or re-rate a Sentinel incident; needs Microsoft Sentinel Responder
 
 ### Azure
 - [Get-MsecAppGatewayClientActivity](./docs/commands/Get-MsecAppGatewayClientActivity.md) - Everything a client IP did through an Application Gateway, with whether it ever completed an authentication - reaching a login page is not logging in
