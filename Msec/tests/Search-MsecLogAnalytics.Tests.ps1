@@ -201,6 +201,57 @@ Describe 'Kql/Law bundled queries' {
         $code | Should -Match 'AGWFirewallLogs'
     }
 
+    It 'excludes pipeline run bookkeeping from AzureDevOps/Governance by operation, not category' {
+        # THE TRAP THIS PREVENTS. Pipelines.RunRetained and Pipelines.RunUnretained are
+        # Category == "Modify", so filtering on category alone leaves them in and the result
+        # looks like governance activity. Measured on one organization: 9,384 of the 11,000
+        # non-Execute events in 30 days were exactly those two.
+        #
+        # Comments stripped first: the header EXPLAINS the categories it excludes, so testing
+        # the whole file matches the explanation rather than the code.
+        $gov  = Get-Content -LiteralPath (Join-Path $script:LawRoot 'AzureDevOps/Governance.kql') -Raw
+        $code = (($gov -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+
+        $code | Should -Match 'AzureDevOpsAuditing'
+        $code | Should -Match 'OperationName\s*!startswith\s*"Pipelines\.Run"'
+        $code | Should -Match 'Category\s*!in'
+    }
+
+    It 'tells a deleted ref from a pushed one, because an all-zero commit id is a deletion' {
+        # THE MISREADING THIS PREVENTS. Git uses 0000...0 as the null object id, so an
+        # all-zero NewObjectId means the branch was DELETED. Measured over 30 days, 6 of the
+        # 14 human policy bypasses were deletions - tidying a merged branch, not forcing code
+        # past review - and reading them as pushes overstates what happened.
+        $gov  = Get-Content -LiteralPath (Join-Path $script:LawRoot 'AzureDevOps/Governance.kql') -Raw
+        $code = (($gov -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+
+        $code | Should -Match 'RefChange'
+        $code | Should -Match '\^0\+\$'
+        $code | Should -Match 'deleted'
+        $code | Should -Match 'created'
+    }
+
+    It 'leaves organization and project filtering to AzureDevOps/Governance callers' {
+        # One workspace can receive streams from several organizations. A project baked in
+        # means a file per project and a stale one the day a project is renamed.
+        $gov  = Get-Content -LiteralPath (Join-Path $script:LawRoot 'AzureDevOps/Governance.kql') -Raw
+        $code = (($gov -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+
+        $code | Should -Match 'ProjectName'
+        # No hardcoded organization, project or tenant names in the executable part.
+        $code | Should -Not -Match '(?i)viedoc|pcgsolutions'
+    }
+
+    It 'falls back to ActorDisplayName, because ActorUPN is empty for service identities' {
+        # Grouping on ActorUPN alone silently collapses every build identity into one blank
+        # bucket, which reads as a single very busy actor.
+        $gov  = Get-Content -LiteralPath (Join-Path $script:LawRoot 'AzureDevOps/Governance.kql') -Raw
+        $code = (($gov -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+
+        $code | Should -Match 'isempty\(ActorUPN\)'
+        $code | Should -Match 'ActorDisplayName'
+    }
+
     It 'leaves region filtering to the caller, exposing the gateway instead' {
         # One workspace collects several gateways across several regions. A region baked into
         # the query means a file per region and a stale one the day a gateway moves.

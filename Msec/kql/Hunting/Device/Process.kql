@@ -1,0 +1,68 @@
+// What actually executes across the estate: one row per distinct binary - file, version,
+// claimed publisher and hash - with how widely and how recently it ran.
+//
+// Answers "which version of X do we have", "what started running this week", and "what runs
+// from somewhere it should not".
+//
+// SIGNER IS A CLAIM, NOT A SIGNATURE. ProcessVersionInfoCompanyName comes from the PE version
+// RESOURCE, which any author can set to any string - malware claiming "Microsoft Corporation"
+// costs nothing and is common. An empty Signer is therefore NOT evidence a file is unsigned,
+// and a populated one is NOT evidence it is signed. For the actual Authenticode state join
+// DeviceFileCertificateInfo on SHA256; this column only tells you what the file says about
+// itself.
+//
+// IDENTITY IS THE HASH, NOT THE NAME. The same FileName routinely covers several builds -
+// measured, 7zG.exe appeared as five distinct SHA256s across five versions in thirty days.
+// Grouping by name alone merges them and makes "which version" unanswerable, so SHA256 is part
+// of the key.
+//
+// THE SAME FILE SPLITS INTO SEVERAL ROWS, and it is the path that does it. Windows reports 8.3
+// short paths and inconsistent casing, so one program appeared three ways in one window -
+// DemoPilot-Live.exe, DEMOPI~1.EXE and demopilot-live.exe. Any count per FileName or
+// FolderPath is therefore a FLOOR, not a total. Group on SHA256 when the number has to be
+// right.
+//
+// FileName != OriginalFileName IS WORTH LOOKING AT. OriginalFileName is baked into the version
+// resource at build time, so a mismatch means the binary was renamed after it was compiled -
+// routine for installers and updaters, and also how a renamed system tool hides. Measured over
+// thirty days: 418,271 of 11,012,759 process events carried a mismatch.
+//
+// "NOT RENAMED" AND "CANNOT TELL" ARE DIFFERENT ANSWERS and Renamed keeps them apart. Barely
+// half the events carry an OriginalFileName at all - measured, 5,434,686 of 11,012,759 - and
+// reporting the other half as "no" would claim a check was done that was not. Renamed is "yes"
+// on a mismatch, "no" on a match, and EMPTY when the file declares no original name.
+//
+// Renamed is a STRING on purpose. A KQL bool arrives through this API as Int64 0/1, so
+// -eq 'True' silently matches nothing - which is how a first pass here reported zero renamed
+// binaries out of 418,271.
+//
+// THE EXTENSION IS STRIPPED FROM BOTH SIDES BEFORE COMPARING, because Microsoft's own version
+// resources routinely omit it: UsoClient.exe declares "UsoClient", wermgr.exe declares
+// "WerMgr". Comparing the raw strings reported 13,523 "renamed" binaries led by ordinary
+// Windows components - a list long enough to look alarming and useless enough to waste the
+// afternoon that chased it. Only a difference in the BASE name counts.
+//
+// NO TIME FILTER AND NO DEVICE FILTER. The window is sent as its own timespan, and -Days
+// DEFAULTS TO SEVEN - pass it explicitly. DeviceName is deliberately not a column here: this
+// is an inventory, and one row per binary per device would be a different, much larger query.
+DeviceProcessEvents
+| where isnotempty(FileName)
+| extend Signer       = tostring(ProcessVersionInfoCompanyName),
+         Version      = tostring(ProcessVersionInfoProductVersion),
+         OriginalName = tostring(ProcessVersionInfoOriginalFileName)
+| summarize
+    Runs      = count(),
+    Devices   = dcount(DeviceName),
+    Accounts  = dcount(AccountName),
+    FirstSeen = min(Timestamp),
+    LastSeen  = max(Timestamp)
+    by FileName, Version, Signer, OriginalName, FolderPath, SHA256
+// Extensions stripped from BOTH sides first - see the header.
+| extend FnBase   = trim_end(@"\.[a-z0-9]+$", tolower(FileName)),
+         OrigBase = trim_end(@"\.[a-z0-9]+$", tolower(OriginalName))
+| extend Renamed = case(isempty(OriginalName), "",
+                        OrigBase != FnBase, "yes",
+                        "no")
+| project FileName, Version, Signer, Renamed, OriginalName,
+          Runs, Devices, Accounts, FirstSeen, LastSeen, FolderPath, SHA256
+| order by Runs desc

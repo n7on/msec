@@ -1,0 +1,53 @@
+// What an ASR rule actually stopped, resolved to a real file identity - version and signer -
+// rather than just a hash. One row per rule-outcome-file.
+//
+// THE ASR EVENT CARRIES A HASH AND NO VERSION. DeviceEvents has SHA256 but none of the
+// ProcessVersionInfo fields, so "7zG.exe was blocked" is all it can tell you on its own. The
+// version comes from DeviceProcessEvents, joined on SHA256 - identical hash means a
+// byte-identical file, so this is an identity rather than an inference.
+//
+// THE RESOLVING RUN USUALLY COMES FROM A DIFFERENT DEVICE, and that is the point rather than a
+// flaw. A device that was BLOCKED never ran the file, so it never produced a process event to
+// read a version from. Measured: a blocked 7-Zip on one machine was identified only because a
+// second machine ran the identical hash successfully ten hours later. RanOn says how many
+// devices managed to run it at all - RanOn = 0 next to a large Events is a file that was
+// stopped everywhere.
+//
+// AN EMPTY Version MEANS UNRESOLVED, NOT UNVERSIONED. A leftouter join leaves it blank when no
+// device in the window ever ran that hash, which is exactly the case for something blocked on
+// first contact everywhere. Do not read blank as "no version information exists" - read it as
+// "telemetry cannot say, ask the Defender file API". Signer is blank the same way, and a blank
+// signer is NOT evidence the file is unsigned.
+//
+// THE JOIN IS THE EXPENSIVE PART. DeviceProcessEvents is one of the largest tables; it is
+// summarised to one row per hash BEFORE the join so the join itself stays small. Narrow -Days
+// if this times out rather than removing the summarize.
+//
+// NO RULE OR DEVICE FILTER. Rule, Outcome and FolderPath are columns - narrow in PowerShell.
+DeviceEvents
+| where ActionType startswith "Asr"
+| where isnotempty(SHA256)
+| extend Outcome = case(ActionType endswith "Blocked", "Blocked",
+                        ActionType endswith "Audited", "Audited",
+                        ActionType endswith "Warn",    "Warned",
+                        "Other")
+| extend Rule = replace_regex(ActionType, @"(Blocked|Audited|Warn)$", "")
+| summarize
+    Events    = count(),
+    Devices   = dcount(DeviceName),
+    FirstSeen = min(Timestamp),
+    LastSeen  = max(Timestamp)
+    by Rule, Outcome, FileName, FolderPath, SHA256
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where isnotempty(SHA256)
+    | summarize
+        Version  = take_any(tostring(ProcessVersionInfoProductVersion)),
+        Signer   = take_any(tostring(ProcessVersionInfoCompanyName)),
+        RanOn    = dcount(DeviceName),
+        FirstRun = min(Timestamp)
+        by SHA256
+  ) on SHA256
+| project Rule, Outcome, FileName, Version, Signer, FolderPath,
+          Events, Devices, RanOn, FirstSeen, LastSeen, FirstRun, SHA256
+| order by Events desc

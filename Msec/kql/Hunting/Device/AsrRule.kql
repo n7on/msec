@@ -1,0 +1,46 @@
+// Attack Surface Reduction events: what each rule stopped or would have stopped, per file and
+// per device. One row per rule-outcome-file combination.
+//
+// AUDITED AND BLOCKED ARE DIFFERENT QUESTIONS AND THIS KEEPS THEM APART. "Audited" is the
+// answer to "what breaks if I turn this on"; "Blocked" is the answer to "what broke". The
+// ActionType carries both the rule and the outcome in one string - AsrAbusedSystemToolAudited,
+// AsrUntrustedExecutableBlocked - so Rule and Outcome are split out rather than left for the
+// reader to parse.
+//
+// THE RULE NAME HERE IS DEFENDER'S, NOT INTUNE'S, and they do not match. Defender calls it
+// AsrUntrustedExecutable; Intune calls the same thing "Block executable files from running
+// unless they meet a prevalence, age, or trusted list criterion". Join on neither - use
+// Get-MsecIntuneAsrRule to see the configured mode, and treat this as the evidence of what
+// that configuration actually did.
+//
+// PASS -Days EXPLICITLY. Search-MsecDefenderHunting defaults to SEVEN days, and the window is
+// sent to the API as its own timespan - so an ago(30d) written inside the query is silently
+// overridden by it and you get seven days while believing you asked for thirty. Measured on
+// one tenant: the same query returned 8 distinct days by default and 31 with -Days 30, and the
+// event counts differed by a factor of four. Judging "what would break if I enforce this" on
+// an unnoticed seven-day window understates it badly. FirstSeen and Days below are there to
+// make the window you actually got visible in the result.
+//
+// ONE DEVICE CAN DOMINATE, so Devices matters more than Events when judging blast radius -
+// measured, a single machine with a non-standard install path produced the large majority of
+// one rule's events. Sort on Devices to see spread, on Events to see intensity.
+//
+// NO RULE OR DEVICE FILTER IN THE QUERY. Rule, DeviceName and FolderPath are columns, so
+// narrow in PowerShell - Where-Object Rule -eq 'AsrUntrustedExecutable'. A rule baked in means
+// a file per rule and a stale one the day Microsoft adds another.
+DeviceEvents
+| where ActionType startswith "Asr"
+| extend Outcome = case(ActionType endswith "Blocked",  "Blocked",
+                        ActionType endswith "Audited",  "Audited",
+                        ActionType endswith "Warn",     "Warned",
+                        "Other")
+| extend Rule = replace_regex(ActionType, @"(Blocked|Audited|Warn)$", "")
+| summarize
+    Events    = count(),
+    Devices   = dcount(DeviceName),
+    Days      = dcount(bin(Timestamp, 1d)),
+    Accounts  = dcount(InitiatingProcessAccountName),
+    FirstSeen = min(Timestamp),
+    LastSeen  = max(Timestamp)
+    by Rule, Outcome, FileName, FolderPath, InitiatingProcessFileName
+| sort by Events desc

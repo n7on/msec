@@ -152,3 +152,133 @@ Describe 'kql/Hunting bundled queries' {
         $q | Should -Match 'NO Timestamp'
     }
 }
+
+Describe 'Search-MsecDefenderHunting result shaping' {
+
+    It 'strips @odata.type annotations, which doubled the columns of every summarize' {
+        # THE BUG THIS PREVENTS. The hunting API sends a sibling key per typed value -
+        # 'Events@odata.type' = '#Int64' beside 'Events' - so a summarize with two counts came
+        # back as four columns and Format-Table was unreadable.
+        $r = InModuleScope Msec {
+            Mock Assert-MsecSession -MockWith { }
+            Mock Invoke-MsecGraphRequest -MockWith {
+                @{ results = @(
+                    [pscustomobject]@{ 'Rule' = 'AsrUntrustedExecutable'
+                                       'Events' = 13; 'Events@odata.type' = '#Int64'
+                                       'Devices' = 3; 'Devices@odata.type' = '#Int64' }
+                ) }
+            }
+            Search-MsecDefenderHunting -Query 'DeviceEvents | take 1'
+        }
+
+        $names = @($r.PSObject.Properties.Name)
+        $names | Should -Contain 'Events'
+        $names | Should -Contain 'Devices'
+        $names | Should -Not -Contain 'Events@odata.type'
+        $names | Should -Not -Contain 'Devices@odata.type'
+        $r.Events | Should -Be 13
+    }
+
+    It 'keeps every property when the row arrives as a PSCustomObject' {
+        # REGRESSION. The first version of the strip read $row.Keys, which is EMPTY on a
+        # PSCustomObject - so it silently emitted objects with no properties at all rather
+        # than failing, and the result looked like a query that matched nothing.
+        $r = InModuleScope Msec {
+            Mock Assert-MsecSession -MockWith { }
+            Mock Invoke-MsecGraphRequest -MockWith {
+                @{ results = @([pscustomobject]@{ A = 'one'; B = 'two'; C = 'three' }) }
+            }
+            Search-MsecDefenderHunting -Query 'DeviceEvents | take 1'
+        }
+
+        @($r.PSObject.Properties.Name).Count | Should -Be 3
+        $r.B | Should -Be 'two'
+    }
+}
+
+Describe 'Hunting/Device/AsrRule.kql' {
+
+    BeforeAll {
+        $script:HuntRoot = Join-Path (Get-Module Msec).ModuleBase 'kql/Hunting'
+        $script:Asr = Get-Content -LiteralPath (Join-Path $script:HuntRoot 'Device/AsrRule.kql') -Raw
+        $script:AsrCode = (($script:Asr -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+    }
+
+    It 'carries no time filter, because the window is sent as its own timespan' {
+        # A hardcoded ago() would fight the -Days the caller passed, and the API timespan wins -
+        # so the file would look like it filtered and would not.
+        $script:AsrCode | Should -Not -Match 'ago\('
+    }
+
+    It 'splits the outcome from the rule, because they answer different questions' {
+        # "Audited" answers "what breaks if I enforce this"; "Blocked" answers "what broke".
+        # Defender puts both in one ActionType string - AsrUntrustedExecutableBlocked.
+        $script:AsrCode | Should -Match 'Outcome'
+        $script:AsrCode | Should -Match 'Audited'
+        $script:AsrCode | Should -Match 'Blocked'
+        $script:AsrCode | Should -Match 'Rule\s*='
+    }
+
+    It 'exposes the window it actually got, so a short one is visible in the result' {
+        # Search-MsecDefenderHunting defaults to SEVEN days. Measured on one tenant, the same
+        # query returned 8 distinct days by default and 31 with -Days 30 - a four-fold
+        # difference in event counts while the caller believed they asked for thirty.
+        $script:AsrCode | Should -Match 'FirstSeen'
+        $script:AsrCode | Should -Match 'Days\s*='
+    }
+
+    It 'counts devices, not only events, because one machine can dominate' {
+        $script:AsrCode | Should -Match 'dcount\(DeviceName\)'
+    }
+
+    It 'leaves rule and device filtering to the caller' {
+        $script:AsrCode | Should -Not -Match '(?i)viedoc|vie0[0-9]'
+        $script:AsrCode | Should -Match 'FolderPath'
+    }
+}
+
+Describe 'Hunting/Device/Process.kql' {
+
+    BeforeAll {
+        $script:HuntRoot2 = Join-Path (Get-Module Msec).ModuleBase 'kql/Hunting'
+        $raw = Get-Content -LiteralPath (Join-Path $script:HuntRoot2 'Device/Process.kql') -Raw
+        $script:ProcCode = (($raw -split "`n") | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+    }
+
+    It 'carries no time filter, because the window is sent as its own timespan' {
+        $script:ProcCode | Should -Not -Match 'ago\('
+    }
+
+    It 'keys identity on the hash, not the file name' {
+        # The same FileName covers several builds - measured, 7zG.exe appeared as five
+        # distinct SHA256s across five versions in thirty days. Grouping by name alone makes
+        # "which version" unanswerable.
+        $script:ProcCode | Should -Match 'SHA256'
+        $script:ProcCode | Should -Match 'ProcessVersionInfoProductVersion'
+    }
+
+    It 'reports Renamed as a string with an empty third state' {
+        # A KQL bool arrives through this API as Int64 0/1, so -eq 'True' silently matches
+        # nothing. And barely half the events carry an OriginalFileName at all - measured,
+        # 5,434,686 of 11,012,759 - so "no" would claim a check that was never possible.
+        $script:ProcCode | Should -Match '"yes"'
+        $script:ProcCode | Should -Match '"no"'
+        $script:ProcCode | Should -Match 'isempty\(OriginalName\)'
+        $script:ProcCode | Should -Not -Match 'iff\([^)]*true,\s*false\)'
+    }
+
+    It 'strips the extension from both sides before calling something renamed' {
+        # Microsoft's own version resources omit it - UsoClient.exe declares "UsoClient" - and
+        # comparing raw strings reported 13,523 "renamed" binaries led by Windows components.
+        # Stripping the extension cut that to 7,042 genuine base-name differences.
+        $script:ProcCode | Should -Match 'trim_end'
+        $script:ProcCode | Should -Match 'OrigBase'
+    }
+
+    It 'does not treat the declared publisher as a signature' {
+        # ProcessVersionInfoCompanyName is a PE version RESOURCE any author can set. Filtering
+        # on it inside the query would bake a trust decision into an inventory.
+        $script:ProcCode | Should -Not -Match 'Signer\s*(==|!=)\s*"'
+        $script:ProcCode | Should -Not -Match 'ProcessVersionInfoCompanyName\s*(==|!=)'
+    }
+}

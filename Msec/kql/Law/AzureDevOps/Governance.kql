@@ -1,0 +1,69 @@
+// Azure DevOps audit events that represent a GOVERNANCE CHANGE - permissions, policies,
+// group membership, service connections, agents - with the execution noise removed.
+//
+// Requires the organization's audit log to be STREAMED to this workspace (Organization
+// Settings > Auditing > Streams). Without the stream the table does not exist, and the ADO
+// audit API itself keeps only 90 days - the stream is what makes this durable, because the
+// retention then becomes the workspace's rather than ADO's.
+//
+// READING AzureDevOpsAuditing UNFILTERED TELLS YOU ALMOST NOTHING. Measured on one
+// organization over 30 days: 68,953 events, of which 30,096 were Library/Execute (a pipeline
+// reading a variable group) and 16,715 Pipelines/Execute. The security-relevant remainder is
+// roughly 2,000 - under 3%.
+//
+// CATEGORY ALONE DOES NOT SEPARATE NOISE FROM SIGNAL, which is the trap that makes a naive
+// "where Category != 'Execute'" look like it worked. Pipelines.RunRetained and
+// Pipelines.RunUnretained are Category == "Modify" and are pure run-retention bookkeeping -
+// 9,384 of the 11,000 non-Execute events on the same organization. They are excluded by
+// OPERATION NAME below, not by category.
+//
+// NO ORGANIZATION OR PROJECT FILTER IN THE QUERY. ProjectName and ScopeDisplayName are
+// columns, so narrow in PowerShell - Where-Object ProjectName -eq 'Security'. One workspace
+// can receive streams from several organizations; a filter baked in here means a file per
+// organization and a stale one the day a project is renamed.
+//
+// Git.RefUpdatePoliciesBypassed IS THE ONE TO READ FIRST. It records a push that bypassed
+// branch policy - 168 events by 7 actors in 30 days on the measured organization - and is the
+// only row here that describes a control being deliberately stepped around rather than
+// reconfigured.
+//
+// ActorUPN is empty for service principals and build identities, and ActorDisplayName is a
+// GUID for them rather than a name - measured, the single busiest actor in 30 days resolved to
+// neither until it was looked up with Get-MsecAzureDevOpsUser. Actor is best-effort; treat a
+// GUID as "a build identity, not yet resolved" rather than as an account.
+//
+// THERE IS NO BYPASS REASON IN THIS DATA, and looking for one is how an afternoon disappears.
+// Git.RefUpdatePoliciesBypassed records a PUSH that bypassed policy; Azure DevOps prompts for
+// a justification on PULL REQUEST completion, which is a different event that this table did
+// not contain at all over the measured 30 days. Data carries repo, branch and the before/after
+// commit ids and nothing else - identical for human and service identities. The nearest thing
+// to "why" is the commit message behind NewObjectId, which has to be fetched from the Git API.
+//
+// Repo, Branch and NewCommit are lifted out of Data because the bare Details sentence cannot
+// be filtered or joined on.
+//
+// AN ALL-ZERO COMMIT ID IS A DELETION, NOT A PUSH, and reading one as the other overstates
+// what happened. Git uses 0000...0 as the null object id: all-zero NewObjectId means the ref
+// was DELETED, all-zero OldObjectId means it was CREATED. Measured over 30 days, 6 of the 14
+// human policy bypasses were branch deletions rather than pushes - a merged feature branch
+// being tidied away, not somebody forcing code past review. RefChange says which, and is
+// empty for operations that do not touch a ref at all rather than claiming "pushed".
+AzureDevOpsAuditing
+| where Category !in ("Execute", "Access")
+// Run bookkeeping, not governance - see the header.
+| where OperationName !startswith "Pipelines.Run"
+| where OperationName !in ("Pipelines.ResourceAuthorizedForPipeline", "Release.ReleaseCreated")
+| extend Actor = iff(isempty(ActorUPN), ActorDisplayName, ActorUPN)
+| extend Repo      = tostring(Data.RepoName),
+         Branch    = tostring(Data.FriendlyName),
+         OldCommit = tostring(Data.OldObjectId),
+         NewCommit = tostring(Data.NewObjectId)
+// Empty, not "pushed", for anything that does not touch a ref - see the header.
+| extend RefChange = case(isempty(NewCommit) and isempty(OldCommit), "",
+                          NewCommit matches regex "^0+$", "deleted",
+                          OldCommit matches regex "^0+$", "created",
+                          "pushed")
+| project TimeGenerated, Actor, OperationName, Area, Category,
+          ProjectName, Repo, Branch, RefChange, OldCommit, NewCommit,
+          ScopeType, ScopeDisplayName, IpAddress, Details, CorrelationId
+| order by TimeGenerated desc

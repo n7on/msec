@@ -181,10 +181,21 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 Needs the 'ThreatHunting.Read.All' application permission, which New-MsecApp consents.
 Runs as the app, read-only.
 
-EVERY VALUE COMES BACK AS A STRING.
-The hunting API returns JSON without types, so a
-count is '1234' and a boolean is 'false' - and 'false' is TRUTHY in PowerShell.
-Cast
-before comparing or sorting; see the example.
+TYPES ARE INCONSISTENT, SO CAST BEFORE COMPARING OR SORTING.
+Most values arrive as
+strings - '9' sorts after '10' - but not all: a KQL bool comes back as Int64 0/1, so
+-eq 'True' silently matches nothing, and a datetime arrives as a string with no
+ToString(format) overload on it.
+Measured both on a live tenant.
+Treat the type of any
+column as unknown until you have cast it.
+
+The API does annotate types, sending a sibling key per typed value -
+'Events@odata.type' = '#Int64' beside 'Events'.
+Those annotation keys are STRIPPED from
+the output: they are metadata about the row rather than part of it, and leaving them in
+doubled the column count of every summarize.
+The values themselves are left as strings,
+so nothing silently changes type between one API version and the next.
 
 ## RELATED LINKS
