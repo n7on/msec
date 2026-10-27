@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-27
+
 ### Fixed
 - The module could not be found on Linux after `Install-Module`, which broke every consumer on
   a case-sensitive filesystem from 0.5.0 onwards. The directory and its three files are
@@ -47,7 +49,6 @@ All notable changes to this project will be documented in this file.
   and every other status rethrown untouched because waiting cannot fix a 403 or a 404.
   `Invoke-MsecGraphRequest` now calls the shared helper, so Graph and ARM cannot drift into two
   slightly different backoff loops.
-
 
 ## [0.8.0] - 2026-10-27
 

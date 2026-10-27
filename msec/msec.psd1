@@ -1,6 +1,6 @@
 @{
     RootModule        = 'msec.psm1'
-    ModuleVersion     = '0.8.0'
+    ModuleVersion     = '0.8.1'
     GUID              = '5a8c1f2b-9d4e-4b7c-8a3f-1e6d2b9c4a7f'
     Author            = 'Anton Lindstrom'
     Copyright         = '(c) 2026 Anton Lindström. Licensed under the MIT License.'
