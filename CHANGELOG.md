@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-27
+
 ### Added
 - `Get-MsecSentinelIncident` and `Set-MsecSentinelIncident` - read and write Microsoft Sentinel
   incidents from the workspace itself, including the ones Defender XDR has never seen.

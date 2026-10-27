@@ -71,6 +71,31 @@ Describe 'Msec.psd1 version' {
             Should -Contain $script:Version -Because "CHANGELOG.md needs a '## [$($script:Version)]' heading before $($script:Version) can be released"
     }
 
+    It 'has a CHANGELOG entry that is not empty' {
+        # THE GUARD THIS ADDS. Checking only that the heading EXISTS let 0.7.0 ship with three
+        # empty '## [0.7.0]' headings and the real entry still under [Unreleased] - the tests
+        # were green throughout, because a heading was present. A release whose entry says
+        # nothing is the same as a release with no entry to the person reading it.
+        $raw = Get-Content (Join-Path $PSScriptRoot '..' '..' 'CHANGELOG.md') -Raw
+        $pattern = "(?ms)^##\s*\[$([regex]::Escape($script:Version))\][^\n]*\n(.*?)(?=^##\s*\[|\z)"
+        $m = [regex]::Match($raw, $pattern)
+
+        $m.Success | Should -BeTrue -Because "CHANGELOG.md needs a '## [$($script:Version)]' heading"
+        $m.Groups[1].Value.Trim() |
+            Should -Not -BeNullOrEmpty -Because "the '## [$($script:Version)]' entry is empty - write what changed before releasing"
+    }
+
+    It 'leaves no empty version heading anywhere in the CHANGELOG' {
+        # Same bug seen from the other side: New-MsecRelease once inserted a heading above
+        # EVERY previous release, so the damage was not limited to the version being cut.
+        $raw = Get-Content (Join-Path $PSScriptRoot '..' '..' 'CHANGELOG.md') -Raw
+        $empty = [regex]::Matches($raw, "(?ms)^(##\s*\[[^\]]+\][^\n]*)\n\s*(?=^##\s*\[)") |
+                     ForEach-Object { $_.Groups[1].Value.Trim() } |
+                     Where-Object { $_ -notmatch '\[Unreleased\]' }
+
+        $empty -join ', ' | Should -BeNullOrEmpty -Because 'a version heading with nothing under it tells a reader nothing'
+    }
+
     It 'has the manifest version at the top of the CHANGELOG' {
         # Catches a bump that went backwards, or a typo like 0.50 for 0.5.0: both leave a valid
         # heading somewhere in the file while the newest entry describes something else.
