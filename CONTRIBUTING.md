@@ -4,8 +4,8 @@
 
 ```
 Msec/
-  Msec.psd1              manifest - FunctionsToExport is the public surface
-  Msec.psm1              dot-sources Private/ then Public/, exports Public/ only
+  msec.psd1              manifest - FunctionsToExport is the public surface
+  msec.psm1              dot-sources Private/ then Public/, exports Public/ only
   msec.format.ps1xml     table views for types with collection columns
   Public/                one exported command per file, named after the command
   Private/               one helper per file, not exported
@@ -18,13 +18,13 @@ tools/                   Update-MsecHelp.ps1, the docs generator
 ```
 
 A new command is a file in `Public/`, a matching file in `Tests/`, and a name added to
-`FunctionsToExport` in the manifest. `Msec.psm1` picks up the file automatically; the
+`FunctionsToExport` in the manifest. `msec.psm1` picks up the file automatically; the
 manifest is what makes it visible to a caller, and a test asserts the two agree.
 
 ## Running the tests
 
 ```powershell
-Invoke-Pester -Path ./Msec/tests
+Invoke-Pester -Path ./msec/tests
 ```
 
 No tenant, no network, no Azure context is needed - every test mocks
@@ -38,7 +38,7 @@ masks a whole class of failure that CI then finds:
 pwsh -NoProfile -Command {
     Import-Module Az.Accounts
     Clear-AzContext -Scope Process -Force      # process scope only - your saved login is untouched
-    Invoke-Pester -Path ./Msec/tests
+    Invoke-Pester -Path ./msec/tests
 }
 ```
 
@@ -107,7 +107,7 @@ Note that Pester 5 does not set a non-zero exit code by itself. Both workflows c
 
 ## Releasing a new version
 
-1. Bump `ModuleVersion` in `Msec/Msec.psd1`.
+1. Bump `ModuleVersion` in `msec/msec.psd1`.
 2. Update `PrivateData.PSData.ReleaseNotes` in the same file.
 3. Regenerate the docs if any help changed: `./tools/Update-MsecHelp.ps1`.
 4. Commit and push.
@@ -172,9 +172,9 @@ tag, which is the usual advice for third-party actions in a security-sensitive r
 ## Things that will catch you out
 
 **Import the `.psm1`, not the manifest.** The tests do
-`Import-Module ./Msec/Msec.psm1 -Force`, which bypasses `Msec.psd1` entirely. Anything the
+`Import-Module ./msec/msec.psm1 -Force`, which bypasses `msec.psd1` entirely. Anything the
 manifest would do - `FormatsToProcess`, `RequiredModules` - does not happen on that path.
-This is why `Msec.psm1` loads `msec.format.ps1xml` itself with `Update-FormatData` rather
+This is why `msec.psm1` loads `msec.format.ps1xml` itself with `Update-FormatData` rather
 than relying on a manifest key.
 
 **Mocks are matched most-recently-defined first.** With overlapping `-ParameterFilter`

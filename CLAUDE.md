@@ -5,8 +5,8 @@
 This agent (session `msec-29`) **owns the `msec` PowerShell module** - the code in this repo
 and its releases to the PowerShell Gallery.
 
-- **Owns (may change):** everything in this repo. Commands in `Msec/public/`, tests in
-  `Msec/tests/`, bundled KQL in `Msec/kql/`, generated help in `docs/commands/`, the manifest,
+- **Owns (may change):** everything in this repo. Commands in `msec/public/`, tests in
+  `msec/tests/`, bundled KQL in `msec/kql/`, generated help in `docs/commands/`, the manifest,
   `CHANGELOG.md` and `README.md`.
 - **Reads, never changes:** every Microsoft tenant the module queries. msec is a
   **read-only posture module**. Its app registration holds `*.Read.All` and nothing else.
@@ -87,9 +87,9 @@ conventions protect.
 
 ### Checklist for any command change
 
-1. Write or update the command in `Msec/public/`.
-2. Tests in `Msec/tests/`, including a regression test for every bug found - name the symptom.
-3. `pwsh -c "Invoke-Pester -Path Msec/tests"` - all green.
+1. Write or update the command in `msec/public/`.
+2. Tests in `msec/tests/`, including a regression test for every bug found - name the symptom.
+3. `pwsh -c "Invoke-Pester -Path msec/tests"` - all green.
 4. `pwsh -File tools/Update-MsecHelp.ps1` to regenerate `docs/commands/`.
 5. A `CHANGELOG.md` entry under the unreleased version, saying what was wrong and what it cost.
 

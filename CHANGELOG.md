@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The module could not be found on Linux after `Install-Module`, which broke every consumer on
+  a case-sensitive filesystem from 0.5.0 onwards. The directory and its three files are
+  lowercase `msec` again.
+
+  THE GALLERY ID IS LOWERCASE AND CANNOT BE CHANGED. `Install-Module` lays the package down as
+  `msec/<version>/`, and PowerShell then looks for `<folder>/<version>/<folder>.psd1` - a
+  CASE-SENSITIVE lookup on Linux. Since 0.5.0 the package shipped `Msec.psd1`, so
+  `Get-Module -ListAvailable msec` returned nothing and every command was "not recognized".
+  Reported by the Reporting pipelines, failing on ubuntu agents since 18 October while the
+  same commit had passed on the 11th.
+
+  macOS AND WINDOWS CANNOT REPRODUCE IT - their filesystems are case-insensitive, to the point
+  that `mv msec.psd1 Msec.psd1` is refused as "the same file". THE TEST SUITE HID IT TOO, by
+  importing the module BY PATH from the repo; nothing anywhere installed it and imported it by
+  name, so the one code path every consumer uses was the one never tested. CI was green on
+  ubuntu throughout.
+
+  Guarded now by comparing the manifest's name to its folder with `[string]::Equals(...,
+  'Ordinal')`. An ordinary comparison returns true for `Msec` vs `msec` and would pass on
+  exactly the broken shape.
+
+  This reverses the rename in 0.5.0, deliberately and temporarily: a request is open with the
+  PowerShell Gallery to change the package id to `Msec`, and the names can follow it back once
+  that lands.
+
+
+### Fixed
 - `Get-MsecSentinelIncident` and `Set-MsecSentinelIncident` now retry ARM throttling instead of
   failing the call.
 
@@ -2623,11 +2650,11 @@ All notable changes to this project will be documented in this file.
   Project names are URL-encoded now: 17 of 36 contained spaces, so `-Project 'Contoso eTMF'` had
   been building a malformed URL.
 
-- **Fixed on Linux:** the module folder and its manifest are lowercase - `Msec/Msec.psd1`,
+- **Fixed on Linux:** the module folder and its manifest are lowercase - `msec/msec.psd1`,
   `msec.psm1`, `msec.format.ps1xml` - matching the PowerShell Gallery id.
 
   The id was set by the first publish and a Gallery id keeps the casing it was first published
-  with, so `Install-Module` created `.../Modules/msec/<version>/Msec.psd1`: a lowercase directory
+  with, so `Install-Module` created `.../Modules/msec/<version>/msec.psd1`: a lowercase directory
   holding a capitalised manifest. PowerShell resolves a module as
   `<directory>/<version>/<directory>.psd1`, and on Linux that lookup is CASE-SENSITIVE - so
   `Import-Module Msec` failed there with "no valid module file was found in any module
@@ -3001,7 +3028,7 @@ All notable changes to this project will be documented in this file.
   non-zero exit as "issue found, run the remediation", so a machine that could not be read would
   otherwise have its administrators edited on the strength of a failed check.
 
-  `Msec/tests/IntuneRemediationScripts.Tests.ps1` guards what is testable off-Windows: both
+  `msec/tests/IntuneRemediationScripts.Tests.ps1` guards what is testable off-Windows: both
   halves present and parsing, the group resolved by SID, the safety rails still there, and -
   the hazard the scripts warn about - `$TargetAccount` identical across the pair, since they are
   separate uploads and nothing in Intune enforces that they agree.

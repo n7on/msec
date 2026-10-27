@@ -1,6 +1,6 @@
 ---
-external help file: Msec-help.xml
-Module Name: Msec
+external help file: msec-help.xml
+Module Name: msec
 online version:
 schema: 2.0.0
 ---
@@ -174,7 +174,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 ## NOTES
 Each row is a \[PSCustomObject\] with PSTypeName 'MsecEntraMfaRegistration', whose
 DefaultDisplayPropertySet (UserPrincipalName, IsAdmin, IsMfaCapable,
-DefaultMfaMethod) is registered in Msec.psm1.
+DefaultMfaMethod) is registered in msec.psm1.
 
 Projection (Graph field -\> output property):
   id                          -\> UserId

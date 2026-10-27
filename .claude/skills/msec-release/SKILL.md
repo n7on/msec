@@ -45,7 +45,7 @@ absent from it - discovered afterwards, that costs a fix version.
 **3. Opens the CHANGELOG entry** with today's date, and warns that it is empty. Write it.
 Someone deciding whether to upgrade reads this and nothing else.
 
-**4. Bumps `ModuleVersion`** in `Msec/Msec.psd1`.
+**4. Bumps `ModuleVersion`** in `msec/msec.psd1`.
 
 **5. Regenerates `docs/commands/`** via `tools/Update-MsecHelp.ps1`.
 
@@ -57,7 +57,7 @@ It never pushes and never publishes.
 
 ## The guards behind it
 
-- `Msec/tests/MsecManifest.Tests.ps1` fails when `ModuleVersion` has no matching CHANGELOG
+- `msec/tests/MsecManifest.Tests.ps1` fails when `ModuleVersion` has no matching CHANGELOG
   entry, when it is not the newest entry, or when it is malformed. CI runs on every push and
   pull request.
 - `.github/workflows/publish.yml` **fails** when the manifest disagrees with the tag. It used

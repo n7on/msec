@@ -24,7 +24,7 @@ the help and the edge cases, not the API call.
 
 ## Shape
 
-`Msec/public/<Verb>-Msec<Noun>.ps1`, one command per file, approved verb.
+`msec/public/<Verb>-Msec<Noun>.ps1`, one command per file, approved verb.
 
 ```powershell
 function Get-MsecThing {
@@ -62,8 +62,8 @@ function Get-MsecThing {
 }
 ```
 
-Then: add it to `FunctionsToExport` in `Msec/Msec.psd1`, and a view in
-`Msec/Msec.format.ps1xml` if the default table is unreadable.
+Then: add it to `FunctionsToExport` in `msec/msec.psd1`, and a view in
+`msec/msec.format.ps1xml` if the default table is unreadable.
 
 ## Rules that decide the hard cases
 
@@ -81,9 +81,9 @@ Then: add it to `FunctionsToExport` in `Msec/Msec.psd1`, and a view in
 
 ## Finishing
 
-1. Tests in `Msec/tests/<Command>.Tests.ps1`. Cover the trap each help paragraph describes, and
+1. Tests in `msec/tests/<Command>.Tests.ps1`. Cover the trap each help paragraph describes, and
    add a regression test named after the symptom for every bug found on the way.
-2. `pwsh -c "Invoke-Pester -Path Msec/tests -Output Detailed"` - all green.
+2. `pwsh -c "Invoke-Pester -Path msec/tests -Output Detailed"` - all green.
 3. `pwsh -File tools/Update-MsecHelp.ps1` - regenerates `docs/commands/` and audits the help.
 4. `CHANGELOG.md` entry under the unreleased version: what was wrong, what it cost, what
    changed. Capitalised lead sentences, same as the help.

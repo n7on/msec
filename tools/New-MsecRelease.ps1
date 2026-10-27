@@ -47,7 +47,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot     = Split-Path $PSScriptRoot -Parent
-$manifestPath = Join-Path $repoRoot 'Msec/Msec.psd1'
+$manifestPath = Join-Path $repoRoot 'msec/msec.psd1'
 $changelog    = Join-Path $repoRoot 'CHANGELOG.md'
 $tag          = "v$Version"
 
@@ -130,8 +130,8 @@ if ($PSCmdlet.ShouldProcess('docs/commands', 'Regenerate')) {
 if ($SkipTests) { Write-Warning 'Skipping the test suite (-SkipTests).' }
 else {
     Step 'Running the suite'
-    if ($PSCmdlet.ShouldProcess('Msec/tests', 'Invoke-Pester')) {
-        $result = Invoke-Pester -Path (Join-Path $repoRoot 'Msec/tests') -Output Normal -PassThru
+    if ($PSCmdlet.ShouldProcess('msec/tests', 'Invoke-Pester')) {
+        $result = Invoke-Pester -Path (Join-Path $repoRoot 'msec/tests') -Output Normal -PassThru
         if ($result.FailedCount -gt 0) { throw "$($result.FailedCount) test(s) failed - not tagging." }
         Write-Host "  $($result.PassedCount) passed"
     }
