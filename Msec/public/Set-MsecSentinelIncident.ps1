@@ -189,7 +189,10 @@ function Set-MsecSentinelIncident {
         $url = "$($workspace.Base)/incidents/$incidentName" + '?api-version=2024-09-01'
 
         # READ BEFORE WRITE, ALWAYS. PUT replaces - see the help.
-        try { $before = Invoke-RestMethod -Headers $headers -Uri $url -ErrorAction Stop }
+        try {
+            $before = Invoke-MsecRetryableRequest -What 'Azure Resource Manager' -RequestArgs @{
+                Headers = $headers; Uri = $url; ErrorAction = 'Stop' }
+        }
         catch {
             $detail = "$($_.Exception.Message)"
             if ($detail -match '403|Forbidden') {
@@ -254,8 +257,12 @@ function Set-MsecSentinelIncident {
         if ($before.etag) { $writeHeaders['If-Match'] = $before.etag }
 
         try {
-            $after = Invoke-RestMethod -Headers $writeHeaders -Method Put -ContentType 'application/json' `
-                        -Uri $url -Body ($body | ConvertTo-Json -Depth 8) -ErrorAction Stop
+            # RETRIED ON 429. ARM throttles per subscription, and a bulk close is one PUT per
+            # incident - reported from a live run of 240, one write was throttled. Without the
+            # retry that lands mid-run with some incidents written and some not.
+            $after = Invoke-MsecRetryableRequest -What 'Azure Resource Manager' -RequestArgs @{
+                Headers = $writeHeaders; Method = 'Put'; ContentType = 'application/json'
+                Uri = $url; Body = ($body | ConvertTo-Json -Depth 8); ErrorAction = 'Stop' }
         }
         catch {
             $detail = "$($_.Exception.Message)"

@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `Get-MsecSentinelIncident` and `Set-MsecSentinelIncident` now retry ARM throttling instead of
+  failing the call.
+
+  A BULK CLOSE IS ONE PUT PER INCIDENT AND ARM THROTTLES PER SUBSCRIPTION. Reported from a live
+  run closing 240 incidents: one write came back 429 and had to be retried by hand. Without the
+  retry that arrives mid-run as a hard failure with some incidents written and some not, which
+  is the worst state to resume from - you cannot tell which half is done without re-reading
+  everything.
+
+  THE RETRY IS THE ONE THE GRAPH CALLERS ALREADY USED, extracted into
+  `Invoke-MsecRetryableRequest` rather than written a second time: 429, 503 and 504 retried up
+  to five attempts, `Retry-After` honoured where present, capped exponential backoff otherwise,
+  and every other status rethrown untouched because waiting cannot fix a 403 or a 404.
+  `Invoke-MsecGraphRequest` now calls the shared helper, so Graph and ARM cannot drift into two
+  slightly different backoff loops.
+
+
 ## [0.8.0] - 2026-10-27
 
 ### Added

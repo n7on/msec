@@ -8,7 +8,8 @@ function Invoke-MsecGraphRequest {
         each page's .value items are emitted to the pipeline as a single concatenated stream.
         Without -All, the raw object (with .value and possibly @odata.nextLink) is returned.
 
-        Retries throttling (429) and transient server errors (503, 504) up to 4 times,
+        Retries throttling (429) and transient server errors (503, 504) up to 4 times via
+        Invoke-MsecRetryableRequest,
         honouring Graph's Retry-After header where it is present and falling back to
         capped exponential backoff. Every other status - 403, 400, 404 - is rethrown
         immediately, since retrying cannot help and would only delay the message.
@@ -73,46 +74,11 @@ function Invoke-MsecGraphRequest {
     # Bounded, so a persistently throttled call still surfaces as an error rather than
     # hanging forever. Non-throttling errors (403, 400, 404) are rethrown untouched -
     # retrying those would only delay a message the caller needs now.
-    $maxAttempts = 5
-
+    # Retries live in Invoke-MsecRetryableRequest, shared with the ARM callers so Graph and
+    # ARM cannot drift into two slightly different backoff loops.
     $invoke = {
         param($Params)
-
-        for ($attempt = 1; ; $attempt++) {
-            try {
-                return Invoke-RestMethod @Params
-            }
-            catch {
-                $status = $null
-                if ($_.Exception.PSObject.Properties.Name -contains 'Response' -and $_.Exception.Response) {
-                    $status = [int] $_.Exception.Response.StatusCode
-                }
-
-                $throttled = ($status -in 429, 503, 504) -or
-                             ($_.Exception.Message -match '\b(429|503|504)\b|Too Many Requests|Service Unavailable')
-
-                if (-not $throttled -or $attempt -ge $maxAttempts) { throw }
-
-                # Retry-After is authoritative when present; Graph sets it on 429. Fall
-                # back to exponential backoff, capped so one bad call cannot stall a run
-                # for minutes.
-                $wait = 0
-                try {
-                    $retryAfter = $_.Exception.Response.Headers.RetryAfter
-                    if ($retryAfter) {
-                        if ($retryAfter.Delta) { $wait = [int] $retryAfter.Delta.TotalSeconds }
-                        elseif ("$retryAfter" -match '^\d+$') { $wait = [int] "$retryAfter" }
-                    }
-                }
-                catch {
-                    # Header shapes vary by platform and exception type; backoff covers it.
-                }
-                if ($wait -le 0) { $wait = [Math]::Min(30, [Math]::Pow(2, $attempt)) }
-
-                Write-Verbose "Microsoft Graph throttled this request (status $status). Waiting $wait s, then retry $attempt of $($maxAttempts - 1): $($Params.Uri)"
-                Start-Sleep -Seconds $wait
-            }
-        }
+        Invoke-MsecRetryableRequest -What 'Microsoft Graph' -RequestArgs $Params -MaxAttempts 5
     }
 
     if (-not $All) {

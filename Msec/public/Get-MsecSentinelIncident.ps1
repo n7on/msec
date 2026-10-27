@@ -122,7 +122,8 @@ function Get-MsecSentinelIncident {
         try {
             # PAGED TO THE END. See the help - a single GET truncates silently.
             while ($uri) {
-                $page = Invoke-RestMethod -Headers $headers -Uri $uri -ErrorAction Stop
+                $page = Invoke-MsecRetryableRequest -What 'Azure Resource Manager' -RequestArgs @{
+                    Headers = $headers; Uri = $uri; ErrorAction = 'Stop' }
                 foreach ($i in @($page.value)) { $raw.Add($i) }
                 $uri = $page.nextLink
             }
@@ -152,9 +153,10 @@ function Get-MsecSentinelIncident {
             if ($IncludeEntities) {
                 try {
                     # POST, and it is a read - the API expresses the expansion as a body.
-                    $e = Invoke-RestMethod -Headers $headers -Method Post -ContentType 'application/json' `
-                            -Uri "$($workspace.Base)/incidents/$($i.name)/entities?api-version=2024-09-01" `
-                            -Body '{}' -ErrorAction Stop
+                    $e = Invoke-MsecRetryableRequest -What 'Azure Resource Manager' -RequestArgs @{
+                        Headers = $headers; Method = 'Post'; ContentType = 'application/json'
+                        Uri = "$($workspace.Base)/incidents/$($i.name)/entities?api-version=2024-09-01"
+                        Body = '{}'; ErrorAction = 'Stop' }
                     $entities = @($e.entities | ForEach-Object {
                         $ep = $_.properties
                         [PSCustomObject]@{
