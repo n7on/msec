@@ -110,6 +110,7 @@
         'Get-MsecExchangeMailboxPermission',
         'Get-MsecExchangeInboxRule',
         'Get-MsecSharePointSite',
+        'Get-MsecSharePointSiteSharing',
         'Get-MsecTeamsPolicy',
         'Get-MsecTeamsPolicyAssignment',
         'Get-MsecSharePointSiteUser',

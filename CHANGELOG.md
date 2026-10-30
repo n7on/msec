@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- `Get-MsecSharePointSite -IncludeSharingLevel` and `-IncludeDomainRestriction`, plus
-  `Connect-MsecSharePointOnline -Interactive -ClientId` - the per-site external sharing
-  settings msec previously could not read at all.
+- `Get-MsecSharePointSiteSharing`, plus `Connect-MsecSharePointOnline -Interactive -ClientId` -
+  the per-site external sharing settings msec previously could not read at all.
+
+  A SEPARATE COMMAND BECAUSE IT IS A DIFFERENT IDENTITY. `Get-MsecSharePointSite` reads the
+  inventory as the msec app; this reads tenant-admin properties as a signed-in human. One
+  command spanning both grew a `.NOTES` claiming no PnP session was needed, which its own new
+  parameters had made false - the symptom of a command doing two jobs.
 
   THE APP CANNOT READ THEM AND IS NOT GOING TO BE ABLE TO. Tenant administration needs
   `Sites.FullControl.All`, write access to every site, which this module deliberately does not

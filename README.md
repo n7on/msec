@@ -471,6 +471,7 @@ Compliance Administrator), which is what a 403 there usually means.
 
 ### SharePoint Online
 - [Get-MsecSharePointSite](./docs/commands/Get-MsecSharePointSite.md) - Every site in the tenant, classified, with Loop and Designer containers separated out
+- [Get-MsecSharePointSiteSharing](./docs/commands/Get-MsecSharePointSiteSharing.md) - Each site's external sharing level and its own domain allow-list. Runs as YOU via an interactive admin sign-in; the app cannot read these
 - [Get-MsecSharePointSiteUser](./docs/commands/Get-MsecSharePointSiteUser.md) - A site's owners and members, with security groups expanded to the people inside them
 - [Get-MsecSharePointTenantSetting](./docs/commands/Get-MsecSharePointTenantSetting.md) - Tenant-wide sharing posture: sharing capability, domain lists, legacy auth
 

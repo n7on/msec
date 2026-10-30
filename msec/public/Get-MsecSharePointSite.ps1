@@ -5,32 +5,18 @@ function Get-MsecSharePointSite {
         review against.
 
     .DESCRIPTION
-        TWO SHARING SETTINGS DECIDE WHETHER AN EXTERNAL SHARE SUCCEEDS, and both need the
-        TENANT ADMIN host. A site carries its own sharing level - "Only people in your
-        organization" through "Anyone" - and its own domain allow-list, independent of the
-        tenant settings Get-MsecSharePointTenantSetting reports. They combine with the tenant's
-        as an INTERSECTION, so a site can be stricter but never broader, and two lists that
-        disagree leave a site unable to share with anybody. Measured on one investigation: the
-        tenant allowed one domain, the site allowed three different ones, the intersection was
-        empty, and every external share failed with a domain error.
+        THE SITE INVENTORY, AS THE APP. What this does NOT carry is the pair of settings that
+        actually decide whether an external share succeeds - the site's own sharing level and
+        its own domain allow-list. Those are tenant-admin properties, unreadable at any
+        permission this module is willing to hold, and they live in
+        Get-MsecSharePointSiteSharing, which signs in as a human instead.
 
-        THE APP CANNOT READ THEM, AND IS NOT GOING TO BE ABLE TO. Tenant administration needs
-        Sites.FullControl.All - write access to every site - which this module deliberately
-        does not hold. Verified: the certificate authenticates against the -admin host and then
-        fails every admin call with "Attempted to perform an unauthorized operation". So
-        -IncludeSharingLevel requires an INTERACTIVE sign-in as somebody holding SharePoint
-        Administrator, through Connect-MsecSharePointOnline -Interactive. The capability comes
-        from that person's role; the app gains nothing.
-
-        THE BULK CALL LIES ABOUT THE DOMAIN RESTRICTION, which is why reading it is a separate
-        switch. Get-PnPTenantSite with no -Identity returns every site in about a second and
-        its SharingCapability is correct - but SharingDomainRestrictionMode comes back as
-        "None" and the domain list empty for a site that genuinely has one. Measured on the
-        same site: bulk said None, -Identity said AllowList with four domains. A report built
-        on the bulk result would state confidently that no site restricts by domain.
-        -IncludeDomainRestriction therefore queries each site individually - about 0.4s each,
-        a minute for 150 sites - and leaves the value $null rather than "None" when a site
-        could not be read.
+        SO A PERMISSIVE READING HERE SETTLES NOTHING ABOUT SHARING. Site settings combine with
+        the tenant's as an INTERSECTION - a site can be stricter but never broader - and two
+        lists that disagree leave a site unable to share with anybody. Measured on one
+        investigation: the tenant allowed one domain, the site allowed three different ones,
+        the intersection was empty, and every external share failed with a domain error while
+        every value available here read as permissive.
 
     .PARAMETER IncludeAppContainer
         Include Loop and other app-created storage containers.
@@ -57,23 +43,6 @@ function Get-MsecSharePointSite {
         # What the tenant actually holds, before deciding what to review.
         Get-MsecSharePointSite -All | Group-Object SiteType | Sort-Object Count -Descending
 
-    .PARAMETER IncludeSharingLevel
-        The site's external sharing level, from the tenant admin API: Disabled,
-        ExistingExternalUserSharingOnly, ExternalUserSharingOnly or ExternalUserAndGuestSharing.
-
-        REQUIRES AN INTERACTIVE ADMIN SESSION - see the description - and throws naming how to
-        get one rather than returning a quietly empty column. One bulk call for the whole
-        tenant, so it is cheap. SharingLevel is $null for anything the admin API does not list,
-        such as a subsite.
-
-    .PARAMETER IncludeDomainRestriction
-        The site's own domain allow/block list. Implies -IncludeSharingLevel.
-
-        ONE CALL PER SITE, because the bulk result is wrong for this field - see the
-        description. About 0.4s per site; roughly a minute for 150. DomainRestriction is $null
-        when a site could not be read, never "None", because "None" is exactly the wrong answer
-        the cheap path gives.
-
     .PARAMETER CreatedSince
         Only sites created on or after this date.
 
@@ -92,32 +61,24 @@ function Get-MsecSharePointSite {
         access control, lock state. ONE EXTRA REQUEST PER SITE, which is why it is opt-in;
         measured on one tenant, 149 sites.
 
-        IT DOES NOT INCLUDE THE SITE'S SHARING LEVEL OR ITS DOMAIN LIST, and reading it as
-        though it did is the mistake this paragraph exists to prevent - see the description.
-        Settings is $null when the site could not be read, never a blank object.
+        IT DOES NOT INCLUDE THE SITE'S SHARING LEVEL OR ITS DOMAIN LIST - those are in
+        Get-MsecSharePointSiteSharing, and reading these as though they answered the same
+        question is the mistake this paragraph exists to prevent. ShareByEmailEnabled in
+        particular is NOT the sharing mode: measured, it was True on a site where external
+        sharing was completely blocked. Settings is $null when a site could not be read, never
+        a blank object.
 
     .OUTPUTS
         PSCustomObject per site, PSTypeName 'MsecSharePointSite'.
 
     .NOTES
-        THREE IDENTITIES, DEPENDING ON WHAT YOU ASK FOR, and it is worth knowing which answered
-        which column:
+        Runs as the msec app throughout - both the site list and -IncludeSettings. Needs
+        Connect-Msec and Sites.Read.All on MICROSOFT GRAPH, which is a different permission
+        from the identically-named one on the SharePoint service principal. Both are granted by
+        New-MsecApp -Workload SharePoint and do different jobs: the Graph one enumerates sites,
+        the SharePoint one reads what is inside them.
 
-          the site list            the msec app, on Microsoft Graph
-          -IncludeSettings         the msec app, on SharePoint (each site's own host)
-          -IncludeSharingLevel     YOU, through an interactive PnP sign-in to the admin host
-          -IncludeDomainRestriction
-
-        The first two need Connect-Msec and Sites.Read.All on MICROSOFT GRAPH - a different
-        permission from the identically-named one on the SharePoint service principal. Both are
-        granted by New-MsecApp -Workload SharePoint and do different jobs: the Graph one
-        enumerates sites, the SharePoint one reads what is inside them.
-
-        The last two need Connect-MsecSharePointOnline -Interactive and a SharePoint
-        Administrator role on YOUR account. They are not app-readable at any permission this
-        module is willing to hold - see the description. The interactive sign-in is PnP's own
-        and has nothing to do with the Az context: an Az-derived token is refused by SharePoint
-        whatever the account, because its audience is normalised to the service GUID.
+        Get-MsecSharePointSiteSharing is the one that needs a human.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -130,36 +91,10 @@ function Get-MsecSharePointSite {
         [switch] $IncludeSettings,
 
         # FILTERS ON CREATION, NOT ON LAST CHANGE - see the help.
-        [datetime] $CreatedSince,
-
-        # Needs an INTERACTIVE PnP session against the admin host - see the help.
-        [switch] $IncludeSharingLevel,
-
-        # Implies -IncludeSharingLevel and costs one call PER SITE - see the help.
-        [switch] $IncludeDomainRestriction
+        [datetime] $CreatedSince
     )
 
     Assert-MsecSession
-
-    # ---- tenant-admin sharing, when asked ------------------------------------------------
-    # SharingCapability comes from ONE bulk call. The domain restriction does NOT: see the
-    # help - the bulk call reports None for a site that genuinely has a list.
-    $sharing = @{}
-    if ($IncludeSharingLevel -or $IncludeDomainRestriction) {
-        if (-not (Get-Command Get-PnPTenantSite -ErrorAction SilentlyContinue)) {
-            throw 'PnP.PowerShell is required for -IncludeSharingLevel. Install with: Install-Module PnP.PowerShell -Scope CurrentUser'
-        }
-        try { $tenantSites = @(Get-PnPTenantSite -ErrorAction Stop) }
-        catch {
-            throw ("Could not read tenant site settings: $(($_.Exception.Message -split [char]10)[0]) " +
-                   'This needs an INTERACTIVE connection to the admin host, because the app-only ' +
-                   'certificate is refused there - tenant administration requires Sites.FullControl.All, ' +
-                   'a write permission msec does not hold. Run: Connect-MsecSharePointOnline ' +
-                   '-Url https://<tenant>-admin.sharepoint.com -Interactive -ClientId <app>')
-        }
-        foreach ($t in $tenantSites) { $sharing["$($t.Url)".TrimEnd('/').ToLower()] = $t }
-        Write-Verbose "Read sharing level for $($sharing.Count) site(s) from the tenant admin API."
-    }
 
     $sites = @()
     try {
@@ -205,10 +140,8 @@ function Get-MsecSharePointSite {
         }
 
         # PER-SITE PROPERTIES COST A CALL EACH, and the token audience is the site's own host.
-        # WHAT THIS CANNOT SHOW is in the help: SharingCapability and the per-site domain list
-        # live on the tenant-admin surface and need Sites.FullControl.All, a WRITE permission
-        # this module will not hold. Verified: Get-PnPTenantSite against the admin host
-        # authenticates and then answers "Attempted to perform an unauthorized operation".
+        # WHAT THIS CANNOT SHOW is the sharing level and the domain list - tenant-admin
+        # properties, in Get-MsecSharePointSiteSharing.
         $settings = $null
         if ($IncludeSettings) {
             try {
@@ -236,28 +169,6 @@ function Get-MsecSharePointSite {
             }
         }
 
-        $sharingLevel = $null; $restrictionMode = $null; $allowedDomains = $null; $blockedDomains = $null
-        if ($sharing.Count) {
-            $t = $sharing["$webUrl".TrimEnd('/').ToLower()]
-            if ($t) {
-                $sharingLevel = [string] $t.SharingCapability
-                if ($IncludeDomainRestriction) {
-                    # ONE CALL PER SITE, because the bulk result is WRONG here - see the help.
-                    try {
-                        $one = Get-PnPTenantSite -Identity $webUrl -ErrorAction Stop
-                        $restrictionMode = [string] $one.SharingDomainRestrictionMode
-                        $allowedDomains  = @("$($one.SharingAllowedDomainList)" -split '[,\s]+' | Where-Object { $_ })
-                        $blockedDomains  = @("$($one.SharingBlockedDomainList)" -split '[,\s]+' | Where-Object { $_ })
-                    }
-                    catch {
-                        # $null, never 'None' - that is the lie the bulk call tells.
-                        Write-Warning "Could not read the domain restriction for $webUrl : $(($_.Exception.Message -split [char]10)[0])"
-                    }
-                }
-            }
-            else { Write-Verbose "No tenant-admin entry for $webUrl (subsite, or not a site collection)." }
-        }
-
         [PSCustomObject]@{
             PSTypeName       = 'MsecSharePointSite'
             DisplayName      = $site.displayName
@@ -269,10 +180,6 @@ function Get-MsecSharePointSite {
             LastModifiedDateTime = $site.lastModifiedDateTime
             Hostname         = $site.siteCollection.hostname
             Id               = $site.id
-            SharingLevel     = $sharingLevel
-            DomainRestriction = $restrictionMode
-            AllowedDomains   = $allowedDomains
-            BlockedDomains   = $blockedDomains
             Settings         = $settings
         }
     }
