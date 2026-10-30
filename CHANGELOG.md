@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `Get-MsecSharePointSite -IncludeSettings` - each site's own properties: sharing-link policy,
+  sensitivity label, restricted access control, lock state and group id. Opt-in because it
+  costs one request per site; measured on one tenant, 149 sites.
+
+  `Settings` IS `$null` WHEN A SITE COULD NOT BE READ, never a blank object - every flag
+  reading as `False` would be a confident wrong answer about a site nobody could query.
+  Subsites return 400 from `_api/site` and warn by name rather than failing the run.
+
+### Changed
+- `Get-MsecSharePointSite` and `Get-MsecSharePointTenantSetting` now lead with the trap that a
+  permissive tenant reading does not mean a share will work.
+
+  TWO SETTINGS DECIDE AN EXTERNAL SHARE AND NEITHER IS READABLE FROM THIS MODULE. Every site
+  carries its own sharing level and its own domain allow-list, combined with the tenant's as an
+  INTERSECTION - a site can be stricter but never broader, and two lists that disagree leave it
+  unable to share with anybody. Measured on one investigation: the tenant allowed exactly one
+  domain, the site allowed three different ones, the intersection was empty, and every external
+  share failed with a domain error while every setting msec could read said it should work.
+
+  THEY NEED `Sites.FullControl.All`, A WRITE PERMISSION THIS MODULE WILL NOT HOLD. Verified
+  rather than assumed: `Connect-MsecSharePointOnline` authenticates against the `-admin` host
+  and `Get-PnPTenantSite` then answers "Attempted to perform an unauthorized operation"; Graph
+  offers no equivalent either. So the help now says to open the SharePoint admin centre at that
+  point, and `-IncludeSettings` deliberately omits `SharingCapability` even when the API
+  returns it - with a test pinning that, so it cannot drift into looking like the answer.
+
+
 ## [0.8.1] - 2026-10-27
 
 ### Fixed

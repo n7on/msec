@@ -14,11 +14,37 @@ review against.
 ## SYNTAX
 
 ```
-Get-MsecSharePointSite [-IncludeAppContainer] [-IncludePersonal] [-All]
- [<CommonParameters>]
+Get-MsecSharePointSite [-IncludeAppContainer] [-IncludePersonal] [-All] [-IncludeSettings] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
+TWO SHARING SETTINGS DECIDE WHETHER AN EXTERNAL SHARE SUCCEEDS, AND THIS COMMAND CAN
+SEE NEITHER.
+A site carries its own sharing level - "Only people in your organization"
+through "Anyone" - and its own domain allow-list, both independent of the tenant
+settings Get-MsecSharePointTenantSetting reports.
+They are combined with the tenant's
+as an INTERSECTION, so a site can be stricter but never broader, and two lists that
+disagree leave a site unable to share with anybody.
+
+THEY LIVE ON THE TENANT-ADMIN SURFACE and need Sites.FullControl.All - a WRITE
+permission this module deliberately does not hold.
+Verified rather than assumed:
+Connect-MsecSharePointOnline authenticates against the -admin host successfully, and
+Get-PnPTenantSite then answers "Attempted to perform an unauthorized operation".
+Graph
+has no equivalent either - /beta/sites/{id} carries no sharing properties and
+/beta/admin/sharepoint/sites/{id} returns 400.
+
+So when an external share fails and the tenant settings look permissive, STOP HERE AND
+OPEN THE SHAREPOINT ADMIN CENTRE: Active sites \> the site \> Sharing, and expand
+"Advanced settings for external sharing" for the domain list.
+Measured on one
+investigation, the tenant allowed exactly one domain and the site allowed three
+different ones, so the effective intersection was empty and every external share from
+that site failed with a domain error - while every reading available here said the
+share should work.
+
 Enumerates sites through Microsoft Graph rather than the SharePoint tenant-admin API,
 and that choice is about privilege rather than preference.
 
@@ -119,6 +145,28 @@ Accept wildcard characters: False
 
 ### -All
 Include everything, classified but unfiltered.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -IncludeSettings
+Fetch each site's own properties - sharing-link policy, sensitivity label, restricted
+access control, lock state.
+ONE EXTRA REQUEST PER SITE, which is why it is opt-in;
+measured on one tenant, 149 sites.
+
+IT DOES NOT INCLUDE THE SITE'S SHARING LEVEL OR ITS DOMAIN LIST, and reading it as
+though it did is the mistake this paragraph exists to prevent - see the description.
+Settings is $null when the site could not be read, never a blank object.
 
 ```yaml
 Type: SwitchParameter

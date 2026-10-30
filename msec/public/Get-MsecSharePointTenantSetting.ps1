@@ -5,6 +5,22 @@ function Get-MsecSharePointTenantSetting {
         outside the organisation - one row per setting.
 
     .DESCRIPTION
+        THESE ARE TENANT SETTINGS AND A SITE CAN OVERRIDE THEM, which is the trap that makes a
+        permissive reading here misleading. Every site carries its own sharing level and its
+        own domain allow-list, combined with these as an INTERSECTION - a site can be stricter
+        than the tenant but never broader. Neither is readable from this module: they need
+        Sites.FullControl.All, a WRITE permission msec deliberately does not hold.
+
+        SO "THE TENANT ALLOWS IT" IS NOT "THE SHARE WILL WORK". Measured on one investigation:
+        the tenant allowed exactly one domain, the site allowed three different ones, the
+        intersection was empty, and every external share from that site failed with a domain
+        error while every setting reported here read as permissive. Check the site in the
+        SharePoint admin centre before concluding anything from these values alone.
+
+        sharingDomainRestrictionMode IS THE SETTING TO READ FIRST. In allowList mode
+        sharingAllowedDomainList is the COMPLETE set of domains anyone may share with,
+        tenant-wide - adding one domain to unblock a request silently removes every other.
+
         These are TENANT settings, not site properties, and they are the ceiling every site sits
         under. A site can be locked down and still sit in a tenant where anyone-links are on;
         reviewing sites one by one never surfaces that.

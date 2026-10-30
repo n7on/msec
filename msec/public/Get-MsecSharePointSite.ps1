@@ -5,6 +5,28 @@ function Get-MsecSharePointSite {
         review against.
 
     .DESCRIPTION
+        TWO SHARING SETTINGS DECIDE WHETHER AN EXTERNAL SHARE SUCCEEDS, AND THIS COMMAND CAN
+        SEE NEITHER. A site carries its own sharing level - "Only people in your organization"
+        through "Anyone" - and its own domain allow-list, both independent of the tenant
+        settings Get-MsecSharePointTenantSetting reports. They are combined with the tenant's
+        as an INTERSECTION, so a site can be stricter but never broader, and two lists that
+        disagree leave a site unable to share with anybody.
+
+        THEY LIVE ON THE TENANT-ADMIN SURFACE and need Sites.FullControl.All - a WRITE
+        permission this module deliberately does not hold. Verified rather than assumed:
+        Connect-MsecSharePointOnline authenticates against the -admin host successfully, and
+        Get-PnPTenantSite then answers "Attempted to perform an unauthorized operation". Graph
+        has no equivalent either - /beta/sites/{id} carries no sharing properties and
+        /beta/admin/sharepoint/sites/{id} returns 400.
+
+        So when an external share fails and the tenant settings look permissive, STOP HERE AND
+        OPEN THE SHAREPOINT ADMIN CENTRE: Active sites > the site > Sharing, and expand
+        "Advanced settings for external sharing" for the domain list. Measured on one
+        investigation, the tenant allowed exactly one domain and the site allowed three
+        different ones, so the effective intersection was empty and every external share from
+        that site failed with a domain error - while every reading available here said the
+        share should work.
+
         Enumerates sites through Microsoft Graph rather than the SharePoint tenant-admin API,
         and that choice is about privilege rather than preference.
 
@@ -61,6 +83,15 @@ function Get-MsecSharePointSite {
         # What the tenant actually holds, before deciding what to review.
         Get-MsecSharePointSite -All | Group-Object SiteType | Sort-Object Count -Descending
 
+    .PARAMETER IncludeSettings
+        Fetch each site's own properties - sharing-link policy, sensitivity label, restricted
+        access control, lock state. ONE EXTRA REQUEST PER SITE, which is why it is opt-in;
+        measured on one tenant, 149 sites.
+
+        IT DOES NOT INCLUDE THE SITE'S SHARING LEVEL OR ITS DOMAIN LIST, and reading it as
+        though it did is the mistake this paragraph exists to prevent - see the description.
+        Settings is $null when the site could not be read, never a blank object.
+
     .OUTPUTS
         PSCustomObject per site, PSTypeName 'MsecSharePointSite'.
 
@@ -78,7 +109,10 @@ function Get-MsecSharePointSite {
     param(
         [switch] $IncludeAppContainer,
         [switch] $IncludePersonal,
-        [switch] $All
+        [switch] $All,
+
+        # ONE EXTRA REQUEST PER SITE, which is why it is opt-in - measured, 149 sites.
+        [switch] $IncludeSettings
     )
 
     Assert-MsecSession
@@ -117,6 +151,38 @@ function Get-MsecSharePointSite {
             if ($siteType -eq 'Personal' -and -not $IncludePersonal) { continue }
         }
 
+        # PER-SITE PROPERTIES COST A CALL EACH, and the token audience is the site's own host.
+        # WHAT THIS CANNOT SHOW is in the help: SharingCapability and the per-site domain list
+        # live on the tenant-admin surface and need Sites.FullControl.All, a WRITE permission
+        # this module will not hold. Verified: Get-PnPTenantSite against the admin host
+        # authenticates and then answers "Attempted to perform an unauthorized operation".
+        $settings = $null
+        if ($IncludeSettings) {
+            try {
+                $token = Get-MsecAccessToken -Resource "https://$($site.siteCollection.hostname)"
+                $r = Invoke-MsecRetryableRequest -What 'SharePoint' -RequestArgs @{
+                    Uri     = "$webUrl/_api/site"
+                    Headers = @{ Authorization = "Bearer $token"; Accept = 'application/json;odata=nometadata' }
+                    ErrorAction = 'Stop' }
+                $settings = [PSCustomObject]@{
+                    ShareByEmailEnabled            = [bool] $r.ShareByEmailEnabled
+                    ShareByLinkEnabled             = [bool] $r.ShareByLinkEnabled
+                    DisableCompanyWideSharingLinks = [bool] $r.DisableCompanyWideSharingLinks
+                    ExternalSharingTipsEnabled     = [bool] $r.ExternalSharingTipsEnabled
+                    RestrictedAccessControl        = [bool] $r.IsRestrictedAccessControlPolicyEnforcedOnSite
+                    SensitivityLabelId             = $(if ($r.SensitivityLabelId -and "$($r.SensitivityLabelId)" -ne '00000000-0000-0000-0000-000000000000') { [string] $r.SensitivityLabelId } else { $null })
+                    Classification                 = $(if ($r.Classification) { [string] $r.Classification } else { $null })
+                    LockIssue                      = $(if ($r.LockIssue) { [string] $r.LockIssue } else { $null })
+                    ReadOnly                       = [bool] $r.ReadOnly
+                    GroupId                        = $(if ("$($r.GroupId)" -ne '00000000-0000-0000-0000-000000000000') { [string] $r.GroupId } else { $null })
+                }
+            }
+            catch {
+                # $null, never a blank object - "could not read" must not look like "all off".
+                Write-Warning "Could not read settings for $webUrl : $(($_.Exception.Message -split [char]10)[0])"
+            }
+        }
+
         [PSCustomObject]@{
             PSTypeName       = 'MsecSharePointSite'
             DisplayName      = $site.displayName
@@ -128,6 +194,7 @@ function Get-MsecSharePointSite {
             LastModifiedDateTime = $site.lastModifiedDateTime
             Hostname         = $site.siteCollection.hostname
             Id               = $site.id
+            Settings         = $settings
         }
     }
 }
