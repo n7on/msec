@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-30
+
 ### Added
 - `Get-MsecSharePointSiteSharing`, plus `Connect-MsecSharePointOnline -Interactive -ClientId` -
   the per-site external sharing settings msec previously could not read at all.
