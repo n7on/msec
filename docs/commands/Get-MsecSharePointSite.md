@@ -234,14 +234,26 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### PSCustomObject per site, PSTypeName 'MsecSharePointSite'.
 ## NOTES
-Needs Connect-Msec and Sites.Read.All on MICROSOFT GRAPH - which is a different
+THREE IDENTITIES, DEPENDING ON WHAT YOU ASK FOR, and it is worth knowing which answered
+which column:
+
+  the site list            the msec app, on Microsoft Graph
+  -IncludeSettings         the msec app, on SharePoint (each site's own host)
+  -IncludeSharingLevel     YOU, through an interactive PnP sign-in to the admin host
+  -IncludeDomainRestriction
+
+The first two need Connect-Msec and Sites.Read.All on MICROSOFT GRAPH - a different
 permission from the identically-named one on the SharePoint service principal.
 Both are
-granted by New-MsecApp -Workload SharePoint, and they do different jobs: this one
-enumerates sites, the SharePoint one lets PnP read what is inside them.
+granted by New-MsecApp -Workload SharePoint and do different jobs: the Graph one
+enumerates sites, the SharePoint one reads what is inside them.
 
-No PnP session is needed here.
-Get-MsecSharePointSiteUser is what needs that, and it
-connects itself.
+The last two need Connect-MsecSharePointOnline -Interactive and a SharePoint
+Administrator role on YOUR account.
+They are not app-readable at any permission this
+module is willing to hold - see the description.
+The interactive sign-in is PnP's own
+and has nothing to do with the Az context: an Az-derived token is refused by SharePoint
+whatever the account, because its audience is normalised to the service GUID.
 
 ## RELATED LINKS
