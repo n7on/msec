@@ -14,7 +14,8 @@ review against.
 ## SYNTAX
 
 ```
-Get-MsecSharePointSite [-IncludeAppContainer] [-IncludePersonal] [-All] [-IncludeSettings] [<CommonParameters>]
+Get-MsecSharePointSite [-IncludeAppContainer] [-IncludePersonal] [-All] [-IncludeSettings]
+ [[-CreatedSince] <DateTime>] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -176,6 +177,35 @@ Aliases:
 Required: False
 Position: Named
 Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -CreatedSince
+Only sites created on or after this date.
+
+THE POINT IS A WORKLIST, NOT AN ANSWER.
+Self-service site creation means new sites
+arrive with the tenant's default sharing level and no review; this narrows 149 sites to
+the few worth checking - measured, 10 in 180 days.
+The sharing level itself still has
+to be read in the SharePoint admin centre, for the reason in the description.
+
+FILTERS ON CREATION, NOT LAST MODIFIED.
+"What appeared recently" and "what changed
+recently" are different questions and this answers the first.
+A site with no
+createdDateTime is included and warned about rather than dropped, because absent is not
+the same as old.
+
+```yaml
+Type: DateTime
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 1
+Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
 ```

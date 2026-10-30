@@ -17,6 +17,54 @@ BeforeAll {
 }
 AfterAll { Remove-Module msec -Force -ErrorAction SilentlyContinue }
 
+Describe 'Get-MsecSharePointSite -CreatedSince' {
+
+    BeforeEach {
+        InModuleScope msec {
+            Mock Assert-MsecSession -MockWith { }
+            Mock Invoke-MsecGraphRequest -MockWith {
+                @(
+                    [pscustomobject]@{ displayName='Old'; name='old'; webUrl='https://contoso.sharepoint.com/sites/old'
+                                       id='contoso.sharepoint.com,1,1'; createdDateTime='2020-01-01T00:00:00Z'
+                                       siteCollection=[pscustomobject]@{ hostname='contoso.sharepoint.com' } },
+                    [pscustomobject]@{ displayName='New'; name='new'; webUrl='https://contoso.sharepoint.com/sites/new'
+                                       id='contoso.sharepoint.com,2,2'; createdDateTime='2026-09-25T00:00:00Z'
+                                       siteCollection=[pscustomobject]@{ hostname='contoso.sharepoint.com' } },
+                    [pscustomobject]@{ displayName='Undated'; name='undated'; webUrl='https://contoso.sharepoint.com/sites/undated'
+                                       id='contoso.sharepoint.com,3,3'; createdDateTime=$null
+                                       siteCollection=[pscustomobject]@{ hostname='contoso.sharepoint.com' } }
+                )
+            }
+        }
+    }
+
+    It 'returns only sites created on or after the date' {
+        $r = InModuleScope msec { Get-MsecSharePointSite -CreatedSince ([datetime]'2026-01-01') -WarningAction SilentlyContinue }
+        @($r).DisplayName | Should -Contain 'New'
+        @($r).DisplayName | Should -Not -Contain 'Old'
+    }
+
+    It 'includes a site with no creation date rather than dropping it' {
+        # ABSENT IS NOT OLD. A site nobody can date is exactly the one worth looking at, so a
+        # date filter must not silently remove it from a review worklist.
+        $r = InModuleScope msec { Get-MsecSharePointSite -CreatedSince ([datetime]'2026-01-01') -WarningAction SilentlyContinue }
+        @($r).DisplayName | Should -Contain 'Undated'
+    }
+
+    It 'warns about the undated site, so its inclusion is not silent' {
+        $w = InModuleScope msec {
+            $null = Get-MsecSharePointSite -CreatedSince ([datetime]'2026-01-01') -WarningVariable wv -WarningAction SilentlyContinue
+            ($wv -join ' ')
+        }
+        $w | Should -BeLike '*undated*'
+    }
+
+    It 'filters nothing when the parameter is omitted' {
+        $r = InModuleScope msec { Get-MsecSharePointSite }
+        @($r).Count | Should -Be 3
+    }
+}
+
 Describe 'Get-MsecSharePointSite -IncludeSettings' {
 
     BeforeEach {

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `Get-MsecSharePointSite -CreatedSince` - only sites created on or after a date.
+
+  A WORKLIST, NOT AN ANSWER. Self-service site creation is on by default, so new sites arrive
+  with the tenant's sharing level and nobody reviewing them; this narrows the estate to the few
+  worth checking - measured, 10 of 150 in 180 days. The sharing level itself still has to be
+  read in the SharePoint admin centre.
+
+  A SITE WITH NO `createdDateTime` IS INCLUDED AND WARNED ABOUT, not filtered out. Absent is
+  not "old", and a site nobody can date is exactly the one worth looking at. It filters on
+  creation rather than last modified: "what appeared recently" and "what changed recently" are
+  different questions.
+
 - `Get-MsecSharePointSite -IncludeSettings` - each site's own properties: sharing-link policy,
   sensitivity label, restricted access control, lock state and group id. Opt-in because it
   costs one request per site; measured on one tenant, 149 sites.

@@ -83,6 +83,19 @@ function Get-MsecSharePointSite {
         # What the tenant actually holds, before deciding what to review.
         Get-MsecSharePointSite -All | Group-Object SiteType | Sort-Object Count -Descending
 
+    .PARAMETER CreatedSince
+        Only sites created on or after this date.
+
+        THE POINT IS A WORKLIST, NOT AN ANSWER. Self-service site creation means new sites
+        arrive with the tenant's default sharing level and no review; this narrows 149 sites to
+        the few worth checking - measured, 10 in 180 days. The sharing level itself still has
+        to be read in the SharePoint admin centre, for the reason in the description.
+
+        FILTERS ON CREATION, NOT LAST MODIFIED. "What appeared recently" and "what changed
+        recently" are different questions and this answers the first. A site with no
+        createdDateTime is included and warned about rather than dropped, because absent is not
+        the same as old.
+
     .PARAMETER IncludeSettings
         Fetch each site's own properties - sharing-link policy, sensitivity label, restricted
         access control, lock state. ONE EXTRA REQUEST PER SITE, which is why it is opt-in;
@@ -112,7 +125,10 @@ function Get-MsecSharePointSite {
         [switch] $All,
 
         # ONE EXTRA REQUEST PER SITE, which is why it is opt-in - measured, 149 sites.
-        [switch] $IncludeSettings
+        [switch] $IncludeSettings,
+
+        # FILTERS ON CREATION, NOT ON LAST CHANGE - see the help.
+        [datetime] $CreatedSince
     )
 
     Assert-MsecSession
@@ -149,6 +165,15 @@ function Get-MsecSharePointSite {
         if (-not $All) {
             if ($siteType -eq 'AppContainer' -and -not $IncludeAppContainer) { continue }
             if ($siteType -eq 'Personal' -and -not $IncludePersonal) { continue }
+        }
+
+        # A site with no createdDateTime is NOT silently dropped by a date filter - absent is
+        # not "old", and a site nobody can date is exactly the one worth looking at.
+        if ($PSBoundParameters.ContainsKey('CreatedSince')) {
+            if (-not $site.createdDateTime) {
+                Write-Warning "$webUrl has no createdDateTime; included rather than filtered out."
+            }
+            elseif ([datetime] $site.createdDateTime -lt $CreatedSince) { continue }
         }
 
         # PER-SITE PROPERTIES COST A CALL EACH, and the token audience is the site's own host.
