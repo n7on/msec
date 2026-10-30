@@ -14,7 +14,8 @@ run as the msec app without its private key leaving Key Vault.
 ## SYNTAX
 
 ```
-Connect-MsecSharePointOnline [-Url] <String> [[-MinimumMinutes] <Int32>] [-PassThru] [<CommonParameters>]
+Connect-MsecSharePointOnline [-Url] <String> [[-MinimumMinutes] <Int32>] [-PassThru] [-Interactive]
+ [[-ClientId] <String>] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -119,6 +120,43 @@ Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
+### -Interactive
+Sign in as yourself through PnP's browser flow rather than with the app certificate.
+Required to reach the tenant admin host, where the app-only path is refused - see the
+description.
+Needs -ClientId.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -ClientId
+The Entra app to sign in with, for -Interactive.
+PnP 3.x ships no default app, so this
+is not optional.
+It must be registered in this tenant and hold the DELEGATED SharePoint
+permission AllSites.FullControl.
+
+```yaml
+Type: String
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: 3
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
 ### CommonParameters
 This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable, -InformationAction, -InformationVariable, -OutVariable, -OutBuffer, -PipelineVariable, -Verbose, -WarningAction, and -WarningVariable. For more information, see [about_CommonParameters](http://go.microsoft.com/fwlink/?LinkID=113216).
 
@@ -130,17 +168,34 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 Needs Connect-Msec first, and the PnP.PowerShell module - which is NOT a dependency of
 msec.
 
-THERE IS NO -AsCurrentUser HERE, unlike Connect-MsecTeams, and it is not an oversight.
-Borrowing the Az session works for Teams because that API accepts a token whose audience
-is the service.
-SharePoint does not: it validates the audience against the HOST it is
-presented to, and Get-AzAccessToken -ResourceUrl normalises every sharepoint.com URL -
-tenant root and admin host alike - to the service principal's GUID,
+THE Az SESSION CANNOT BE BORROWED HERE, unlike Connect-MsecTeams.
+That API accepts a
+token whose audience is the service; SharePoint validates the audience against the HOST
+it is presented to, and Get-AzAccessToken -ResourceUrl normalises every sharepoint.com
+URL - tenant root and admin host alike - to the service principal's GUID,
 00000003-0000-0ff1-ce00-000000000000.
 The token is issued, carries user_impersonation,
-and is then refused by every site with a bare 401 and an empty content type.
-Verified
-against a live tenant on both hosts.
+and is then refused with a bare 401.
+Verified against a live tenant on both hosts, and
+re-verified since.
+
+-Interactive IS THE WAY IN AS YOURSELF, because PnP does its own sign-in and can
+therefore mint a token whose audience is the actual host.
+That is what makes the
+TENANT ADMIN host reachable - the app-only certificate path authenticates against it
+and then fails every admin call with "Attempted to perform an unauthorized operation",
+because tenant administration needs Sites.FullControl.All, a WRITE permission this
+module deliberately does not hold.
+Signed in as yourself, the capability comes from
+your own SharePoint Administrator role instead, and the app gains nothing: the same
+bargain Connect-MsecAdmin makes.
+
+-Interactive NEEDS A ClientId, and PnP 3.x no longer ships a default app - it fails
+with "Please specify a valid client id for an Entra ID App Registration".
+Use an app
+registered in your own tenant with the DELEGATED SharePoint permission
+AllSites.FullControl; a leftover service principal for a retired multi-tenant app
+fails at sign-in with AADSTS700016 even though it still lists in the directory.
 
 So for a delegated SharePoint session, either use the SharePoint admin centre, or
 register a PUBLIC CLIENT app with delegated SharePoint permissions and a redirect URI

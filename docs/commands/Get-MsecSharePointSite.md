@@ -15,77 +15,46 @@ review against.
 
 ```
 Get-MsecSharePointSite [-IncludeAppContainer] [-IncludePersonal] [-All] [-IncludeSettings]
- [[-CreatedSince] <DateTime>] [<CommonParameters>]
+ [[-CreatedSince] <DateTime>] [-IncludeSharingLevel] [-IncludeDomainRestriction] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
-TWO SHARING SETTINGS DECIDE WHETHER AN EXTERNAL SHARE SUCCEEDS, AND THIS COMMAND CAN
-SEE NEITHER.
-A site carries its own sharing level - "Only people in your organization"
-through "Anyone" - and its own domain allow-list, both independent of the tenant
-settings Get-MsecSharePointTenantSetting reports.
-They are combined with the tenant's
+TWO SHARING SETTINGS DECIDE WHETHER AN EXTERNAL SHARE SUCCEEDS, and both need the
+TENANT ADMIN host.
+A site carries its own sharing level - "Only people in your
+organization" through "Anyone" - and its own domain allow-list, independent of the
+tenant settings Get-MsecSharePointTenantSetting reports.
+They combine with the tenant's
 as an INTERSECTION, so a site can be stricter but never broader, and two lists that
 disagree leave a site unable to share with anybody.
+Measured on one investigation: the
+tenant allowed one domain, the site allowed three different ones, the intersection was
+empty, and every external share failed with a domain error.
 
-THEY LIVE ON THE TENANT-ADMIN SURFACE and need Sites.FullControl.All - a WRITE
-permission this module deliberately does not hold.
-Verified rather than assumed:
-Connect-MsecSharePointOnline authenticates against the -admin host successfully, and
-Get-PnPTenantSite then answers "Attempted to perform an unauthorized operation".
-Graph
-has no equivalent either - /beta/sites/{id} carries no sharing properties and
-/beta/admin/sharepoint/sites/{id} returns 400.
+THE APP CANNOT READ THEM, AND IS NOT GOING TO BE ABLE TO.
+Tenant administration needs
+Sites.FullControl.All - write access to every site - which this module deliberately
+does not hold.
+Verified: the certificate authenticates against the -admin host and then
+fails every admin call with "Attempted to perform an unauthorized operation".
+So
+-IncludeSharingLevel requires an INTERACTIVE sign-in as somebody holding SharePoint
+Administrator, through Connect-MsecSharePointOnline -Interactive.
+The capability comes
+from that person's role; the app gains nothing.
 
-So when an external share fails and the tenant settings look permissive, STOP HERE AND
-OPEN THE SHAREPOINT ADMIN CENTRE: Active sites \> the site \> Sharing, and expand
-"Advanced settings for external sharing" for the domain list.
-Measured on one
-investigation, the tenant allowed exactly one domain and the site allowed three
-different ones, so the effective intersection was empty and every external share from
-that site failed with a domain error - while every reading available here said the
-share should work.
-
-Enumerates sites through Microsoft Graph rather than the SharePoint tenant-admin API,
-and that choice is about privilege rather than preference.
-
-Get-PnPTenantSite talks to the tenant-admin endpoint, which accepts nothing less than
-Sites.FullControl.All - full read, WRITE and DELETE over every site in the tenant.
-For a
-list of site names, in a module that only reads, that is a bad trade.
-Graph answers the
-same question with Sites.Read.All.
-
-MOST OF WHAT GRAPH CALLS A SITE IS NOT A SITE YOU WANT.
-On a real tenant /sites?search=*
-returned 432 results of which 286 were app containers - the backing storage for Loop
-workspaces, Designer files and similar, one per artefact.
-Running a site access review
-across those is noise and hundreds of wasted calls.
-They are classified and excluded by
-default rather than filtered out silently, so the count you see is the count you meant.
-
-SUBWEBS COME BACK TOO, not only site collections.
-/sites?search=* indexes them, so
-'.../sites/Finance/Archive' appears as its own row.
-Worth knowing because the obvious
-alternative - walking Get-PnPSubWeb per site - CANNOT work app-only: enumerating
-Web.Webs needs the Browse Directories right, which the Read level that Sites.Read.All
-maps to does not include, and every call returns a bare E_ACCESSDENIED.
-
-The corollary is that a subweb is classified by its URL like anything else, so it
-reports SiteType 'SiteCollection'.
-The type describes the shape of the URL, not the
-object's place in the hierarchy.
-
-SiteType is one of:
-  SiteCollection  a real site - /sites/ or /teams/.
-What a review is about.
-  AppContainer    /contentstorage/ - Loop, Designer and other app-created storage.
-  Personal        someone's OneDrive.
-Technically a site, never part of a site review,
-                  and there is one per person in the tenant.
-  Root            the tenant root site.
+THE BULK CALL LIES ABOUT THE DOMAIN RESTRICTION, which is why reading it is a separate
+switch.
+Get-PnPTenantSite with no -Identity returns every site in about a second and
+its SharingCapability is correct - but SharingDomainRestrictionMode comes back as
+"None" and the domain list empty for a site that genuinely has one.
+Measured on the
+same site: bulk said None, -Identity said AllowList with four domains.
+A report built
+on the bulk result would state confidently that no site restricts by domain.
+-IncludeDomainRestriction therefore queries each site individually - about 0.4s each,
+a minute for 150 sites - and leaves the value $null rather than "None" when a site
+could not be read.
 
 ## EXAMPLES
 
@@ -206,6 +175,52 @@ Aliases:
 Required: False
 Position: 1
 Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -IncludeSharingLevel
+The site's external sharing level, from the tenant admin API: Disabled,
+ExistingExternalUserSharingOnly, ExternalUserSharingOnly or ExternalUserAndGuestSharing.
+
+REQUIRES AN INTERACTIVE ADMIN SESSION - see the description - and throws naming how to
+get one rather than returning a quietly empty column.
+One bulk call for the whole
+tenant, so it is cheap.
+SharingLevel is $null for anything the admin API does not list,
+such as a subsite.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -IncludeDomainRestriction
+The site's own domain allow/block list.
+Implies -IncludeSharingLevel.
+
+ONE CALL PER SITE, because the bulk result is wrong for this field - see the
+description.
+About 0.4s per site; roughly a minute for 150.
+DomainRestriction is $null
+when a site could not be read, never "None", because "None" is exactly the wrong answer
+the cheap path gives.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
 Accept pipeline input: False
 Accept wildcard characters: False
 ```

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `Get-MsecSharePointSite -IncludeSharingLevel` and `-IncludeDomainRestriction`, plus
+  `Connect-MsecSharePointOnline -Interactive -ClientId` - the per-site external sharing
+  settings msec previously could not read at all.
+
+  THE APP CANNOT READ THEM AND IS NOT GOING TO BE ABLE TO. Tenant administration needs
+  `Sites.FullControl.All`, write access to every site, which this module deliberately does not
+  hold - verified: the certificate authenticates against the `-admin` host and then fails every
+  admin call with "Attempted to perform an unauthorized operation". So this signs in as YOU,
+  through PnP's own browser flow, and the capability comes from your SharePoint Administrator
+  role. The same bargain `Connect-MsecAdmin` makes; the app gains nothing.
+
+  THE Az SESSION STILL CANNOT BE BORROWED. `Get-AzAccessToken` normalises every sharepoint.com
+  URL to the service GUID, so SharePoint refuses the token with a bare 401 - re-verified. PnP
+  mints its own token with the host as audience, which is what makes the admin host reachable.
+  `-Interactive` needs a `-ClientId`: PnP 3.x ships no default app, and a leftover service
+  principal for a retired multi-tenant app fails with `AADSTS700016` while still listing in the
+  directory.
+
+  THE BULK CALL LIES ABOUT THE DOMAIN RESTRICTION, which is why it is a second switch.
+  `Get-PnPTenantSite` with no `-Identity` returns every site in about a second and its
+  `SharingCapability` is right - but `SharingDomainRestrictionMode` comes back `None` and the
+  domain list empty for a site that genuinely has one. Measured on the same site: bulk said
+  `None`, `-Identity` said `AllowList` with four domains. A report built on the bulk result
+  would state confidently that no site restricts by domain. `-IncludeDomainRestriction`
+  therefore queries each site individually - about 0.4s each - and leaves `$null` rather than
+  `None` where a site could not be read.
+
 - `Get-MsecSharePointSite -CreatedSince` - only sites created on or after a date.
 
   A WORKLIST, NOT AN ANSWER. Self-service site creation is on by default, so new sites arrive

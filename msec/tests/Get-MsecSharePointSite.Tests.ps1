@@ -14,8 +14,26 @@
 
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'msec.psm1') -Force -ErrorAction Stop
+
+    # DISCOVERABLE IS NOT USABLE. Pester's Mock needs the command to exist AND to yield
+    # CommandMetadata; PnP.PowerShell is not a dependency of msec, so on a runner without it
+    # the mock fails to build and the test reads as a bug in the code.
+    $script:StubbedPnP = @()
+    $usable = $false
+    $found  = Get-Command Get-PnPTenantSite -ErrorAction SilentlyContinue
+    if ($found) {
+        try   { $null = [System.Management.Automation.CommandMetadata]::new($found); $usable = $true }
+        catch { $usable = $false }
+    }
+    if (-not $usable) {
+        Set-Item 'function:global:Get-PnPTenantSite' -Value { [CmdletBinding()] param([string] $Identity) } -Force
+        $script:StubbedPnP += 'Get-PnPTenantSite'
+    }
 }
-AfterAll { Remove-Module msec -Force -ErrorAction SilentlyContinue }
+AfterAll {
+    foreach ($c in $script:StubbedPnP) { Remove-Item "function:$c" -ErrorAction SilentlyContinue }
+    Remove-Module msec -Force -ErrorAction SilentlyContinue
+}
 
 Describe 'Get-MsecSharePointSite -CreatedSince' {
 
@@ -149,5 +167,83 @@ Describe 'Get-MsecSharePointSite -IncludeSettings' {
         $names | Should -Not -Contain 'SharingCapability'
         $names | Should -Not -Contain 'SharingAllowedDomainList'
         $names | Should -Contain 'ShareByEmailEnabled'
+    }
+}
+
+Describe 'Get-MsecSharePointSite -IncludeSharingLevel' {
+
+    BeforeEach {
+        InModuleScope msec {
+            Mock Assert-MsecSession -MockWith { }
+            Mock Invoke-MsecGraphRequest -MockWith {
+                @([pscustomobject]@{ displayName='Translations'; name='t'
+                                     webUrl='https://contoso.sharepoint.com/sites/Translations'
+                                     id='contoso.sharepoint.com,1,1'; createdDateTime='2025-01-27T00:00:00Z'
+                                     siteCollection=[pscustomobject]@{ hostname='contoso.sharepoint.com' } })
+            }
+            Mock Get-PnPTenantSite -ParameterFilter { $Identity } -MockWith {
+                [pscustomobject]@{ Url=$Identity; SharingCapability='ExternalUserSharingOnly'
+                                   SharingDomainRestrictionMode='AllowList'
+                                   SharingAllowedDomainList='CONTOSO.COM,FABRIKAM.COM'
+                                   SharingBlockedDomainList='' }
+            }
+            # THE BULK CALL LIES: None, and an empty list, for a site that has one.
+            Mock Get-PnPTenantSite -MockWith {
+                [pscustomobject]@{ Url='https://contoso.sharepoint.com/sites/Translations'
+                                   SharingCapability='ExternalUserSharingOnly'
+                                   SharingDomainRestrictionMode='None'
+                                   SharingAllowedDomainList=''; SharingBlockedDomainList='' }
+            }
+        }
+    }
+
+    It 'reads the sharing level from the bulk call, which is correct for that field' {
+        $r = InModuleScope msec { Get-MsecSharePointSite -IncludeSharingLevel }
+        $r.SharingLevel | Should -Be 'ExternalUserSharingOnly'
+    }
+
+    It 'does not report a domain restriction from the bulk call alone' {
+        # THE BUG THIS PREVENTS. Get-PnPTenantSite with no -Identity returns
+        # SharingDomainRestrictionMode = "None" for a site that genuinely has an allow-list.
+        # Measured: bulk said None, -Identity said AllowList with four domains. Reporting the
+        # bulk value would state confidently that no site restricts by domain.
+        $r = InModuleScope msec { Get-MsecSharePointSite -IncludeSharingLevel }
+        $r.DomainRestriction | Should -BeNullOrEmpty
+        $r.AllowedDomains    | Should -BeNullOrEmpty
+    }
+
+    It 'queries each site individually for the domain restriction, and gets the truth' {
+        $r = InModuleScope msec { Get-MsecSharePointSite -IncludeDomainRestriction }
+        $r.DomainRestriction | Should -Be 'AllowList'
+        $r.AllowedDomains    | Should -Contain 'CONTOSO.COM'
+        $r.AllowedDomains    | Should -Contain 'FABRIKAM.COM'
+    }
+
+    It 'throws naming the interactive sign-in when the admin API refuses' {
+        # The app-only certificate authenticates against the admin host and then fails every
+        # admin call. Sending the reader to check app permissions wastes the afternoon: the
+        # fix is an interactive sign-in, not a new grant.
+        $msg = InModuleScope msec {
+            Mock Get-PnPTenantSite -MockWith { throw 'Attempted to perform an unauthorized operation.' }
+            try { Get-MsecSharePointSite -IncludeSharingLevel | Out-Null } catch { $_.Exception.Message }
+        }
+
+        $msg | Should -BeLike '*-Interactive*'
+        $msg | Should -BeLike '*Sites.FullControl.All*'
+    }
+
+    It 'leaves SharingLevel $null for a site the admin API does not list' {
+        # Subsites are not site collections and have no tenant-admin entry. $null, not a guess.
+        $r = InModuleScope msec {
+            Mock Invoke-MsecGraphRequest -MockWith {
+                @([pscustomobject]@{ displayName='Sub'; name='sub'
+                                     webUrl='https://contoso.sharepoint.com/sites/Translations/sub'
+                                     id='contoso.sharepoint.com,9,9'; createdDateTime='2025-01-01T00:00:00Z'
+                                     siteCollection=[pscustomobject]@{ hostname='contoso.sharepoint.com' } })
+            }
+            Get-MsecSharePointSite -IncludeSharingLevel
+        }
+
+        $r.SharingLevel | Should -BeNullOrEmpty
     }
 }

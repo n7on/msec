@@ -31,6 +31,16 @@ function Connect-MsecSharePointOnline {
         Fail unless the token has at least this long left. Default 5. PnP is handed a static
         token and cannot renew it.
 
+    .PARAMETER Interactive
+        Sign in as yourself through PnP's browser flow rather than with the app certificate.
+        Required to reach the tenant admin host, where the app-only path is refused - see the
+        description. Needs -ClientId.
+
+    .PARAMETER ClientId
+        The Entra app to sign in with, for -Interactive. PnP 3.x ships no default app, so this
+        is not optional. It must be registered in this tenant and hold the DELEGATED SharePoint
+        permission AllSites.FullControl.
+
     .PARAMETER PassThru
         Return the connection object instead of making it the ambient one, so the caller's
         current site is left alone. Pass the result to any PnP cmdlet's -Connection parameter.
@@ -54,14 +64,28 @@ function Connect-MsecSharePointOnline {
         Needs Connect-Msec first, and the PnP.PowerShell module - which is NOT a dependency of
         msec.
 
-        THERE IS NO -AsCurrentUser HERE, unlike Connect-MsecTeams, and it is not an oversight.
-        Borrowing the Az session works for Teams because that API accepts a token whose audience
-        is the service. SharePoint does not: it validates the audience against the HOST it is
-        presented to, and Get-AzAccessToken -ResourceUrl normalises every sharepoint.com URL -
-        tenant root and admin host alike - to the service principal's GUID,
+        THE Az SESSION CANNOT BE BORROWED HERE, unlike Connect-MsecTeams. That API accepts a
+        token whose audience is the service; SharePoint validates the audience against the HOST
+        it is presented to, and Get-AzAccessToken -ResourceUrl normalises every sharepoint.com
+        URL - tenant root and admin host alike - to the service principal's GUID,
         00000003-0000-0ff1-ce00-000000000000. The token is issued, carries user_impersonation,
-        and is then refused by every site with a bare 401 and an empty content type. Verified
-        against a live tenant on both hosts.
+        and is then refused with a bare 401. Verified against a live tenant on both hosts, and
+        re-verified since.
+
+        -Interactive IS THE WAY IN AS YOURSELF, because PnP does its own sign-in and can
+        therefore mint a token whose audience is the actual host. That is what makes the
+        TENANT ADMIN host reachable - the app-only certificate path authenticates against it
+        and then fails every admin call with "Attempted to perform an unauthorized operation",
+        because tenant administration needs Sites.FullControl.All, a WRITE permission this
+        module deliberately does not hold. Signed in as yourself, the capability comes from
+        your own SharePoint Administrator role instead, and the app gains nothing: the same
+        bargain Connect-MsecAdmin makes.
+
+        -Interactive NEEDS A ClientId, and PnP 3.x no longer ships a default app - it fails
+        with "Please specify a valid client id for an Entra ID App Registration". Use an app
+        registered in your own tenant with the DELEGATED SharePoint permission
+        AllSites.FullControl; a leftover service principal for a retired multi-tenant app
+        fails at sign-in with AADSTS700016 even though it still lists in the directory.
 
         So for a delegated SharePoint session, either use the SharePoint admin centre, or
         register a PUBLIC CLIENT app with delegated SharePoint permissions and a redirect URI
@@ -86,10 +110,29 @@ function Connect-MsecSharePointOnline {
         # connection, so anything that connects silently moves the caller's session to a
         # different site - which is fine when a human types it and wrong when a command does it
         # on the caller's behalf. Commands use this; people usually do not.
-        [switch] $PassThru
+        [switch] $PassThru,
+
+        # SIGN IN AS YOURSELF through PnP's own browser flow instead of using the app
+        # certificate. The only way to reach the tenant admin host - see the description.
+        [switch] $Interactive,
+
+        # Required by -Interactive. An app registered in THIS tenant holding the delegated
+        # SharePoint permission AllSites.FullControl.
+        [string] $ClientId
     )
 
-    Assert-MsecSession
+    if ($Interactive -and -not $ClientId) {
+        throw ('-Interactive needs -ClientId. PnP 3.x ships no default app and fails with ' +
+               '"Please specify a valid client id for an Entra ID App Registration". Use an app ' +
+               'registered in this tenant holding the delegated SharePoint permission AllSites.FullControl.')
+    }
+    if ($ClientId -and -not $Interactive) {
+        throw '-ClientId only applies to -Interactive. The app-only path authenticates with the Key Vault certificate instead.'
+    }
+
+    # Interactive does NOT need the app session: it signs in as the human and the capability
+    # comes from their own roles, not from the msec app.
+    if (-not $Interactive) { Assert-MsecSession }
 
     if (-not (Get-Module -ListAvailable -Name PnP.PowerShell)) {
         throw 'PnP.PowerShell is required for Connect-MsecSharePointOnline. Install with: Install-Module PnP.PowerShell -Scope CurrentUser'
@@ -103,6 +146,20 @@ function Connect-MsecSharePointOnline {
         throw "'$Url' is not an absolute URL. Pass something like https://contoso.sharepoint.com/sites/finance."
     }
     $resource = "$($uri.Scheme)://$($uri.Host)"
+
+    if ($Interactive) {
+        # PnP mints its own token, so the audience matches the host and the admin host is
+        # reachable. A cached sign-in is reused silently; otherwise a browser opens.
+        $connectArgs = @{ Url = $Url; Interactive = $true; ClientId = $ClientId; ErrorAction = 'Stop' }
+        if ($PassThru) {
+            $connection = Connect-PnPOnline @connectArgs -ReturnConnection
+            Write-Verbose "SharePoint connection created for $Url interactively (not ambient)."
+            return $connection
+        }
+        Connect-PnPOnline @connectArgs
+        Write-Verbose "SharePoint connected to $Url interactively, as the signed-in user."
+        return
+    }
 
     $token = Get-MsecAccessToken -Resource $resource
 
