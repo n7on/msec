@@ -55,6 +55,18 @@ function Get-MsecEnvironment {
     # Defender for Endpoint (securitycenter) is commercial-only here.
     $defender = if ($Name -eq 'AzureCloud') { 'https://api.securitycenter.microsoft.com' } else { $null }
 
+    # Log Analytics data plane. Modern Az.Accounts carries it for every cloud; the per-cloud
+    # fallback keeps an older Az from handing back an empty host, which would surface as a 404
+    # against a URL with a missing segment rather than as a missing endpoint.
+    $operationalInsights = $env.AzureOperationalInsightsEndpointResourceId
+    if (-not $operationalInsights) {
+        $operationalInsights = switch ($Name) {
+            'AzureChinaCloud'   { 'https://api.loganalytics.azure.cn' }
+            'AzureUSGovernment' { 'https://api.loganalytics.us' }
+            default             { 'https://api.loganalytics.io' }
+        }
+    }
+
     [pscustomobject]@{
         EnvironmentName   = $Name
         AadAuthority      = $env.ActiveDirectoryAuthority.TrimEnd('/')
@@ -63,5 +75,6 @@ function Get-MsecEnvironment {
         KeyVaultResource  = $env.AzureKeyVaultServiceEndpointResourceId.TrimEnd('/')
         KeyVaultDnsSuffix = $env.AzureKeyVaultDnsSuffix
         ArmResource       = $env.ResourceManagerUrl.TrimEnd('/')
+        OperationalInsightsResource = $operationalInsights.TrimEnd('/')
     }
 }

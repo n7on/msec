@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `Search-MsecLogAnalytics -Basic` - query Basic- and Auxiliary-plan tables, which the command
+  previously could not reach at all.
+
+  THE QUERY ENDPOINT REFUSES THEM, AND THE ERROR DID NOT SAY SO. A Basic-plan table is rejected
+  by `/v1/workspaces/{id}/query` with `UnsupportedApiQueryValidationError`, whose inner message
+  names `/v1/workspaces/{id}/search` as the endpoint that accepts it. Same host, same token,
+  same body, different path. `Invoke-AzOperationalInsightsQuery` drops that inner error and
+  throws a bare "Operation returned an invalid status code BadRequest", which reads like a KQL
+  mistake. It cost a morning of App Gateway incident triage: the raw per-request rows were
+  reported as unqueryable, and the fallback Analytics summary table carries sampled paths and
+  no host, so a client IP could not be mapped to a study.
+
+  `-Basic` routes to `/search`. The plan is NOT auto-detected - that would mean an ARM call on
+  a different permission scope than the query itself, and a second way to fail. Without the
+  switch, a `BadRequest` from the query endpoint now names both possible causes, because this
+  path genuinely cannot tell a KQL error from a Basic table.
+
+  No extra permission: verified against a live workspace on the rights an Analytics query
+  already uses. Operator support is wider than the Basic-logs documentation suggests -
+  `summarize` works, measured at 140 groups from a `summarize by Host`.
+
+### Changed
+- `Search-MsecLogAnalytics` help now warns that `-MaxRows` does not reduce what a Basic query
+  costs. Both it and the row cap trim rows the service has already scanned, and Basic is billed
+  on data scanned - measured, a two-hour window with `-MaxRows 3` came back at the full
+  500,000-row cap having scanned all of it. Put the limit in the KQL instead.
+- `Get-MsecEnvironment` now resolves the Log Analytics data-plane endpoint per cloud, so a
+  Basic query from a China or US Gov context does not go to the commercial host.
+
 ## [0.9.0] - 2026-10-30
 
 ### Added

@@ -68,6 +68,21 @@ function Search-MsecLogAnalytics {
         nanoseconds, not 7 days. Anything under a minute is rejected rather than silently
         returning an empty result set.
 
+    .PARAMETER Basic
+        Query a table on the BASIC or AUXILIARY plan, through the /search endpoint. Needed
+        because the ordinary query endpoint refuses those tables outright - it is not a
+        permission or a KQL problem, and the error you get without this switch does not say
+        so.
+
+        Not auto-detected on purpose. Reading a table's plan means an ARM call against the
+        workspace resource, which is a different permission scope from the data-plane query
+        and a second thing that can fail; a switch keeps one query to one round trip. No
+        extra permission is needed for -Basic itself - verified against a live workspace on
+        the rights an Analytics query already uses.
+
+        Operator support is wider than the Basic-logs documentation suggests: summarize works.
+        Measured against a live Basic table, 143 groups returned from a summarize by Host.
+
     .PARAMETER MaxRows
         Safety ceiling on rows returned. Default 50000. Hitting it emits a warning and stops;
         results are never truncated silently.
@@ -90,6 +105,19 @@ function Search-MsecLogAnalytics {
         # Discover workspace names to pass to -WorkspaceName, and prime tab completion:
         Search-MsecAzureResourceGraph -ResourceType LogAnalytics |
             Select-Object Name, SubscriptionName, Location, RetentionDays
+
+    .EXAMPLE
+        # Raw Application Gateway access rows for one client IP - the table is Basic plan, so
+        # the query endpoint would refuse this outright without -Basic.
+        Search-MsecLogAnalytics -WorkspaceName contoso-sentinel -Days 30 -Basic `
+            -Query @"
+AGWAccessLogs
+| where ClientIp == "203.0.113.10"
+| project TimeGenerated, Host, RequestUri, HttpStatus, SentBytes
+"@
+
+        Which study a client IP was working in, answered from the full request URLs. The
+        Analytics-plan summary table carries sampled paths and no host, so it cannot.
 
     .OUTPUTS
         PSCustomObject rows shaped by the .kql file's project or summarize clause.
@@ -119,6 +147,25 @@ function Search-MsecLogAnalytics {
         access-log rows a day, and pulling those through PowerShell to filter them is not a
         plan. A response that comes back exactly at the cap is warned about, loudly, because a
         truncated security query looks exactly like a clean one.
+
+        NB - BASIC-PLAN TABLES NEED -Basic, AND THE ERROR WITHOUT IT DOES NOT SAY SO. A table
+        on the Basic or Auxiliary plan is refused by the query endpoint this command normally
+        uses, with BadArgumentError / UnsupportedApiQueryValidationError naming /search as the
+        endpoint that accepts it. Invoke-AzOperationalInsightsQuery drops that inner error and
+        throws a bare "Operation returned an invalid status code BadRequest", which reads like
+        a KQL mistake and is why an Application Gateway access-log table was first reported as
+        unqueryable. -Basic routes to /search. The plan is NOT detected automatically - see the
+        parameter.
+
+        NB - A BASIC QUERY IS BILLED ON DATA SCANNED, not on rows returned, so a wide -Days
+        over a high-volume table costs real money even when it returns nothing. Narrow the
+        window first, then widen it.
+
+        NB - -MaxRows DOES NOT REDUCE WHAT A BASIC QUERY COSTS. Both -MaxRows and the row cap
+        trim rows the service has already scanned and returned, and a Basic query is billed on
+        data scanned. Put the limit in the KQL - "AGWAccessLogs | take 3" - not in -MaxRows.
+        Measured on a live App Gateway access-log table: a two-hour window with -MaxRows 3 came
+        back at the full 500,000-row cap, having scanned all of it.
 
         NB - VALUES ARRIVE AS STRINGS. The query API is untyped on the wire and
         Invoke-AzOperationalInsightsQuery surfaces every column as a string. A column that is
@@ -261,7 +308,12 @@ function Search-MsecLogAnalytics {
 
         [Parameter()]
         [ValidateRange(1, [int]::MaxValue)]
-        [int] $MaxRows = 50000
+        [int] $MaxRows = 50000,
+
+        # Route to the /search endpoint, which is the only one that accepts Basic- and
+        # Auxiliary-plan tables. Not auto-detected: knowing the plan means an extra ARM call
+        # on a different permission scope than the query itself, and a second way to fail.
+        [switch] $Basic
     )
 
     if (-not (Get-AzContext -ErrorAction SilentlyContinue)) {
@@ -330,12 +382,37 @@ function Search-MsecLogAnalytics {
     Write-Verbose ("Workspace $($workspace.Name) (rg=$($workspace.ResourceGroupName), " +
                    "id=$($workspace.CustomerId)), last $window" + [Environment]::NewLine + $query)
 
-    $result = Invoke-AzOperationalInsightsQuery -WorkspaceId $workspace.CustomerId `
+    if ($Basic) {
+        # /search, not /query - see Invoke-MsecLogAnalyticsSearch for why, and for the
+        # string-typing contract that keeps both paths returning the same shape.
+        $rows = @(Invoke-MsecLogAnalyticsSearch -CustomerId $workspace.CustomerId `
                                                 -Query $query `
-                                                -Timespan $window `
-                                                -ErrorAction Stop
+                                                -Timespan $window)
+    }
+    else {
+        try {
+            $result = Invoke-AzOperationalInsightsQuery -WorkspaceId $workspace.CustomerId `
+                                                        -Query $query `
+                                                        -Timespan $window `
+                                                        -ErrorAction Stop
+        }
+        catch {
+            # Invoke-AzOperationalInsightsQuery throws a bare "Operation returned an invalid
+            # status code BadRequest" and drops the inner error, so the one thing the service
+            # did say - which endpoint to use - never reaches the caller. Both causes are
+            # named because this path genuinely cannot tell them apart; guessing one would
+            # send half the callers the wrong way.
+            if ("$($_.Exception.Message)" -match "BadRequest") {
+                throw ("The Log Analytics query endpoint rejected this query as BadRequest. Two causes " +
+                       "are common and the API does not say which: a KQL error, or a table on the BASIC " +
+                       "or AUXILIARY plan - the query endpoint refuses those outright, and -Basic reaches " +
+                       "them through /search instead. Query was: $query")
+            }
+            throw
+        }
 
-    $rows = @($result.Results)
+        $rows = @($result.Results)
+    }
 
     # The API stops at 500,000 rows with no continuation token. Landing exactly on it means the
     # result is almost certainly cut short, and there is no way to ask for the rest - the fix is

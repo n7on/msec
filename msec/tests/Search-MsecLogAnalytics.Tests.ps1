@@ -377,3 +377,138 @@ Describe 'Search-MsecLogAnalytics -Query' {
         $err | Should -Not -Match 'KQL query file not found'
     }
 }
+
+Describe 'Search-MsecLogAnalytics -Basic' {
+    BeforeEach {
+        Get-ChildItem -LiteralPath $script:CacheDir -Filter *.json -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force
+    }
+
+    It 'routes Basic-plan queries to /search and never touches the query endpoint' {
+        $result = InModuleScope Msec {
+            Mock Get-AzContext      -MockWith { [pscustomobject]@{ Subscription = @{ Id = 'sub-1' }; Tenant = @{ Id = 'tenant-1' } } }
+            Mock Get-AzSubscription -MockWith { @([pscustomobject]@{ Id = 'sub-1' }) }
+            Mock Search-AzGraph -MockWith {
+                @([pscustomobject]@{ Name = 'ws-1'; ResourceGroupName = 'rg-a'
+                                     SubscriptionId = 'sub-1'; CustomerId = 'cid-1'; Location = 'westeurope' })
+            }
+            Mock Invoke-AzOperationalInsightsQuery -MockWith { [pscustomobject]@{ Results = @() } }
+            Mock Get-MsecEnvironment -MockWith { [pscustomobject]@{ OperationalInsightsResource = 'https://api.loganalytics.io' } }
+            Mock Get-AzAccessToken -MockWith { [pscustomobject]@{ Token = 'tok' } }
+
+            $script:CapturedArgs = $null
+            Mock Invoke-MsecRetryableRequest -MockWith {
+                $script:CapturedArgs = $RequestArgs
+                [pscustomobject]@{ tables = @(
+                    [pscustomobject]@{
+                        columns = @([pscustomobject]@{ name = 'Host' },
+                                    [pscustomobject]@{ name = 'SentBytes' },
+                                    [pscustomobject]@{ name = 'Referer' },
+                                    [pscustomobject]@{ name = 'Tags' })
+                        rows    = @(, @('a.example', 42, $null, [pscustomobject]@{ k = 'v' }))
+                    }) }
+            }
+
+            $rows = Search-MsecLogAnalytics -WorkspaceName ws-1 -Days 3 -Basic `
+                        -Query 'AGWAccessLogs | project Host, SentBytes, Referer, Tags'
+
+            # The query endpoint must not be consulted at all - not called and ignored.
+            Should -Invoke Invoke-AzOperationalInsightsQuery -Times 0 -Exactly
+
+            [pscustomobject]@{
+                Rows = $rows
+                Uri  = $script:CapturedArgs.Uri
+                Body = $script:CapturedArgs.Body
+            }
+        }
+
+        # The endpoint is /search, not /query - that single path difference is the whole fix.
+        $result.Uri | Should -Be 'https://api.loganalytics.io/v1/workspaces/cid-1/search'
+        # The window goes as an ISO 8601 duration, server-side, not as a clause in the KQL.
+        $result.Body | Should -Match '"timespan":\s*"P3D"'
+        $result.Rows[0].Workspace | Should -Be 'ws-1'
+    }
+
+    It 'returns values as strings, keeps null as null, and renders a non-scalar as JSON' {
+        # One command must not return two shapes depending on a switch: the Analytics path
+        # surfaces every column as a string, so this one does too. A JSON null stays $null -
+        # "no value" and "empty string" are different answers - and a dynamic column would
+        # render as 'System.Object[]' if it went through [string].
+        $rows = InModuleScope Msec {
+            Mock Get-AzContext      -MockWith { [pscustomobject]@{ Subscription = @{ Id = 'sub-1' }; Tenant = @{ Id = 'tenant-1' } } }
+            Mock Get-AzSubscription -MockWith { @([pscustomobject]@{ Id = 'sub-1' }) }
+            Mock Search-AzGraph -MockWith {
+                @([pscustomobject]@{ Name = 'ws-1'; ResourceGroupName = 'rg-a'
+                                     SubscriptionId = 'sub-1'; CustomerId = 'cid-1'; Location = 'westeurope' })
+            }
+            Mock Get-MsecEnvironment -MockWith { [pscustomobject]@{ OperationalInsightsResource = 'https://api.loganalytics.io' } }
+            Mock Get-AzAccessToken -MockWith { [pscustomobject]@{ Token = 'tok' } }
+            Mock Invoke-MsecRetryableRequest -MockWith {
+                [pscustomobject]@{ tables = @(
+                    [pscustomobject]@{
+                        columns = @([pscustomobject]@{ name = 'Host' },
+                                    [pscustomobject]@{ name = 'SentBytes' },
+                                    [pscustomobject]@{ name = 'Referer' },
+                                    [pscustomobject]@{ name = 'Tags' })
+                        rows    = @(, @('a.example', 42, $null, [pscustomobject]@{ k = 'v' }))
+                    }) }
+            }
+            @(Search-MsecLogAnalytics -WorkspaceName ws-1 -Days 1 -Basic -Query 'AGWAccessLogs | take 1')
+        }
+
+        $rows[0].SentBytes | Should -BeOfType [string]
+        $rows[0].SentBytes | Should -Be '42'
+        $rows[0].Referer   | Should -BeNullOrEmpty
+        $null -eq $rows[0].Referer | Should -BeTrue
+        $rows[0].Tags      | Should -Be '{"k":"v"}'
+    }
+
+    It 'uses the Log Analytics host of the current cloud, not the commercial one' {
+        # A China context queries api.loganalytics.azure.cn. Hard-coding the commercial host
+        # would 404 against a workspace that exists.
+        $uri = InModuleScope Msec {
+            Mock Get-AzContext      -MockWith { [pscustomobject]@{ Subscription = @{ Id = 'sub-1' }; Tenant = @{ Id = 'tenant-1' } } }
+            Mock Get-AzSubscription -MockWith { @([pscustomobject]@{ Id = 'sub-1' }) }
+            Mock Search-AzGraph -MockWith {
+                @([pscustomobject]@{ Name = 'ws-1'; ResourceGroupName = 'rg-a'
+                                     SubscriptionId = 'sub-1'; CustomerId = 'cid-1'; Location = 'chinanorth3' })
+            }
+            Mock Get-MsecEnvironment -MockWith { [pscustomobject]@{ OperationalInsightsResource = 'https://api.loganalytics.azure.cn' } }
+            Mock Get-AzAccessToken -MockWith { [pscustomobject]@{ Token = 'tok' } }
+            $script:CapturedArgs = $null
+            Mock Invoke-MsecRetryableRequest -MockWith {
+                $script:CapturedArgs = $RequestArgs
+                [pscustomobject]@{ tables = @() }
+            }
+            $null = Search-MsecLogAnalytics -WorkspaceName ws-1 -Days 1 -Basic -Query 'AGWAccessLogs | take 1'
+            $script:CapturedArgs.Uri
+        }
+
+        $uri | Should -BeLike 'https://api.loganalytics.azure.cn/*'
+    }
+
+    It 'turns the bare BadRequest from a Basic table into an error that names -Basic' {
+        # REGRESSION: "Operation returned an invalid status code 'BadRequest'". That is the
+        # whole message Invoke-AzOperationalInsightsQuery throws for a Basic-plan table - it
+        # drops the inner error, which is the only part that says which endpoint to use. It
+        # reads like a KQL mistake, and an App Gateway access-log table was reported as
+        # unqueryable because of it.
+        $message = InModuleScope Msec {
+            Mock Get-AzContext      -MockWith { [pscustomobject]@{ Subscription = @{ Id = 'sub-1' }; Tenant = @{ Id = 'tenant-1' } } }
+            Mock Get-AzSubscription -MockWith { @([pscustomobject]@{ Id = 'sub-1' }) }
+            Mock Search-AzGraph -MockWith {
+                @([pscustomobject]@{ Name = 'ws-1'; ResourceGroupName = 'rg-a'
+                                     SubscriptionId = 'sub-1'; CustomerId = 'cid-1'; Location = 'westeurope' })
+            }
+            Mock Invoke-AzOperationalInsightsQuery -MockWith {
+                throw "Operation returned an invalid status code 'BadRequest'"
+            }
+            try { Search-MsecLogAnalytics -WorkspaceName ws-1 -Days 1 -Query 'AGWAccessLogs | take 1'; $null }
+            catch { $_.Exception.Message }
+        }
+
+        $message | Should -Match '-Basic'
+        $message | Should -Match 'BASIC'
+        # Both causes are named: this path cannot tell a KQL error from a Basic table.
+        $message | Should -Match 'KQL'
+    }
+}

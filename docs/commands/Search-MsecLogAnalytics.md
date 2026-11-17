@@ -15,13 +15,13 @@ Runs a bundled KQL query against a Log Analytics workspace and returns the rows.
 ### Days (Default)
 ```
 Search-MsecLogAnalytics [-Subject <String>] [-Name <String>] -WorkspaceName <String>
- [-ResourceGroupName <String>] [-Days <Int32>] [-Query <String>] [-MaxRows <Int32>] [<CommonParameters>]
+ [-ResourceGroupName <String>] [-Days <Int32>] [-Query <String>] [-MaxRows <Int32>] [-Basic] [<CommonParameters>]
 ```
 
 ### Timespan
 ```
 Search-MsecLogAnalytics [-Subject <String>] [-Name <String>] -WorkspaceName <String>
- [-ResourceGroupName <String>] -Timespan <TimeSpan> [-Query <String>] [-MaxRows <Int32>] [<CommonParameters>]
+ [-ResourceGroupName <String>] -Timespan <TimeSpan> [-Query <String>] [-MaxRows <Int32>] [-Basic] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -89,6 +89,22 @@ $fired | Where-Object { $_.RuleId -in $disabled.RuleId }   # firing despite bein
 Search-MsecAzureResourceGraph -ResourceType LogAnalytics |
     Select-Object Name, SubscriptionName, Location, RetentionDays
 ```
+
+### EXAMPLE 5
+```
+# Raw Application Gateway access rows for one client IP - the table is Basic plan, so
+# the query endpoint would refuse this outright without -Basic.
+Search-MsecLogAnalytics -WorkspaceName contoso-sentinel -Days 30 -Basic `
+    -Query @"
+AGWAccessLogs
+| where ClientIp == "203.0.113.10"
+| project TimeGenerated, Host, RequestUri, HttpStatus, SentBytes
+"@
+```
+
+Which study a client IP was working in, answered from the full request URLs.
+The
+Analytics-plan summary table carries sampled paths and no host, so it cannot.
 
 ## PARAMETERS
 
@@ -248,6 +264,36 @@ Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
+### -Basic
+Query a table on the BASIC or AUXILIARY plan, through the /search endpoint.
+Needed
+because the ordinary query endpoint refuses those tables outright - it is not a
+permission or a KQL problem, and the error you get without this switch does not say
+so.
+
+Not auto-detected on purpose.
+Reading a table's plan means an ARM call against the
+workspace resource, which is a different permission scope from the data-plane query
+and a second thing that can fail; a switch keeps one query to one round trip.
+No
+extra permission is needed for -Basic itself - verified against a live workspace on
+the rights an Analytics query already uses.
+
+Operator support is wider than the Basic-logs documentation suggests: summarize works.
+Measured against a live Basic table, 143 groups returned from a summarize by Host.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases:
+
+Required: False
+Position: Named
+Default value: False
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
 ### CommonParameters
 This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable, -InformationAction, -InformationVariable, -OutVariable, -OutBuffer, -PipelineVariable, -Verbose, -WarningAction, and -WarningVariable. For more information, see [about_CommonParameters](http://go.microsoft.com/fwlink/?LinkID=113216).
 
@@ -294,6 +340,32 @@ access-log rows a day, and pulling those through PowerShell to filter them is no
 plan.
 A response that comes back exactly at the cap is warned about, loudly, because a
 truncated security query looks exactly like a clean one.
+
+NB - BASIC-PLAN TABLES NEED -Basic, AND THE ERROR WITHOUT IT DOES NOT SAY SO.
+A table
+on the Basic or Auxiliary plan is refused by the query endpoint this command normally
+uses, with BadArgumentError / UnsupportedApiQueryValidationError naming /search as the
+endpoint that accepts it.
+Invoke-AzOperationalInsightsQuery drops that inner error and
+throws a bare "Operation returned an invalid status code BadRequest", which reads like
+a KQL mistake and is why an Application Gateway access-log table was first reported as
+unqueryable.
+-Basic routes to /search.
+The plan is NOT detected automatically - see the
+parameter.
+
+NB - A BASIC QUERY IS BILLED ON DATA SCANNED, not on rows returned, so a wide -Days
+over a high-volume table costs real money even when it returns nothing.
+Narrow the
+window first, then widen it.
+
+NB - -MaxRows DOES NOT REDUCE WHAT A BASIC QUERY COSTS.
+Both -MaxRows and the row cap
+trim rows the service has already scanned and returned, and a Basic query is billed on
+data scanned.
+Put the limit in the KQL - "AGWAccessLogs | take 3" - not in -MaxRows.
+Measured on a live App Gateway access-log table: a two-hour window with -MaxRows 3 came
+back at the full 500,000-row cap, having scanned all of it.
 
 NB - VALUES ARRIVE AS STRINGS.
 The query API is untyped on the wire and
