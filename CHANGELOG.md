@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-17
+
 ### Added
 - `Get-MsecEntraAppAssignment` - who is assigned to an enterprise application, the portal
   "Users and groups" blade, one row per assignment. For a recurring access review.
