@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `Get-MsecEntraAppAssignment` - who is assigned to an enterprise application, the portal
+  "Users and groups" blade, one row per assignment. For a recurring access review.
+
+  `Get-MsecEntraAppConsent` reads the same Graph collection and deliberately keeps only
+  `ServicePrincipal` principals, because those are application permissions granted TO software.
+  Nothing read the other side - the Users and Groups who may USE the app - so the review had no
+  source at all.
+
+  THE UPN IS NOT IN THE ASSIGNMENT. `appRoleAssignedTo` carries `principalDisplayName` and
+  `principalId` and no more, so `UserPrincipalName` and `UserEnabled` cost one extra read per
+  DISTINCT user, cached within the call. Display names are not unique and say nothing about
+  whether the account still works, which is most of what an access review is for. `UserEnabled`
+  is the column that finds assignments outliving the people who held them.
+
+  COUNTING ROWS COUNTS ASSIGNMENTS, NOT PEOPLE. Measured on four live apps: 37 rows, 21 of them
+  user assignments - held between 6 distinct people. Reporting 21 users would overstate the
+  review threefold. Groups are reported as groups and never expanded, as the portal does it.
+
+  A PATTERN THAT MATCHES NOTHING WARNS, because an empty result is otherwise identical to an app
+  with nobody assigned, and on a review that reads as "nobody has access" rather than "we did
+  not look". Found live: a prefix search for four similarly named apps turned up a FIFTH whose
+  name carried an extra suffix, which the obvious wildcard anchored on the shared ending missed.
+
 - `Search-MsecLogAnalytics -Basic` - query Basic- and Auxiliary-plan tables, which the command
   previously could not reach at all.
 

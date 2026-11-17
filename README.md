@@ -409,6 +409,7 @@ Compliance Administrator), which is what a 403 there usually means.
 - [Get-MsecEntraGroupMember](./docs/commands/Get-MsecEntraGroupMember.md) - Members of named groups, with nested groups expanded to the people inside them
 - [Get-MsecEntraAppCredential](./docs/commands/Get-MsecEntraAppCredential.md) - App registration and service principal secrets and certificates, and when they expire
 - [Get-MsecEntraAppConsent](./docs/commands/Get-MsecEntraAppConsent.md) - Which applications have been granted access to tenant data, what they can do, and who consented
+- [Get-MsecEntraAppAssignment](./docs/commands/Get-MsecEntraAppAssignment.md) - Who is assigned to an enterprise application, as the portal Users and groups blade shows it
 
 ### Intune
 - [Get-MsecIntuneConfigurationProfile](./docs/commands/Get-MsecIntuneConfigurationProfile.md) - Settings Catalog and classic configuration profiles merged, with assignment targets resolved

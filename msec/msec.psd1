@@ -127,6 +127,7 @@
         'Get-MsecEntraCrossTenantAccess',
         'Get-MsecEntraNamedLocation',
         'Get-MsecEntraAppCredential',
+        'Get-MsecEntraAppAssignment',
         'Get-MsecEntraAppConsent',
         'Get-MsecEntraMfaRegistration',
         'Get-MsecEntraMfaEvidence',
